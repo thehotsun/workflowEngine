@@ -1,0 +1,193 @@
+'use strict'
+
+const {
+  OPENCLAW_BASE_URL,
+  OPENCLAW_GATEWAY_TOKEN,
+  OPENCLAW_DEFAULT_SESSION_KEY,
+  OPENCLAW_MESSAGE_TOOL,
+  OPENCLAW_MESSAGE_ACTION,
+  OPENCLAW_MESSAGE_TARGET_ARG,
+  OPENCLAW_MESSAGE_CONTENT_ARG,
+  OPENCLAW_MESSAGE_TARGET_PREFIX,
+  OPENCLAW_MESSAGE_CHANNEL,
+  OPENCLAW_ACCOUNT_ID,
+  CIRCUIT_BREAKER_THRESHOLD,
+  CIRCUIT_BREAKER_RESET_MS
+} = require('../config')
+const logger = require('../utils/logger')
+
+// 简易熔断器实现（不依赖 cockatiel，保持零额外依赖）
+const circuitBreaker = {
+  failures: 0,
+  state: 'closed',       // closed | open | half-open
+  openAt: null,
+
+  canRequest() {
+    if (this.state === 'closed') return true
+    if (this.state === 'open') {
+      if (Date.now() - this.openAt >= CIRCUIT_BREAKER_RESET_MS) {
+        this.state = 'half-open'
+        return true
+      }
+      return false
+    }
+    return true // half-open: 试探一次
+  },
+
+  onSuccess() {
+    this.failures = 0
+    this.state = 'closed'
+  },
+
+  onFailure() {
+    this.failures++
+    if (this.failures >= CIRCUIT_BREAKER_THRESHOLD) {
+      this.state = 'open'
+      this.openAt = Date.now()
+      logger.warn({ failures: this.failures }, 'OpenClaw circuit breaker OPEN')
+    }
+  }
+}
+
+const DEFAULT_TIMEOUT_MS = 15_000
+
+function buildHeaders(extraHeaders = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...extraHeaders
+  }
+
+  if (OPENCLAW_GATEWAY_TOKEN) {
+    headers.Authorization = `Bearer ${OPENCLAW_GATEWAY_TOKEN}`
+  }
+
+  if (OPENCLAW_MESSAGE_CHANNEL) {
+    headers['x-openclaw-message-channel'] = OPENCLAW_MESSAGE_CHANNEL
+  }
+
+  if (OPENCLAW_ACCOUNT_ID) {
+    headers['x-openclaw-account-id'] = OPENCLAW_ACCOUNT_ID
+  }
+
+  return headers
+}
+
+function buildInvokeBody({ tool, action, args = {}, sessionKey, dryRun = false }) {
+  return {
+    tool,
+    ...(action ? { action } : {}),
+    ...(args && Object.keys(args).length > 0 ? { args } : {}),
+    ...(sessionKey ? { sessionKey } : {}),
+    dryRun
+  }
+}
+
+const QQBOT_TARGET_PREFIXES = ['qqbot:c2c:', 'qqbot:group:', 'qqbot:channel:']
+
+function buildMessageTarget(channelId) {
+  if (!channelId) {
+    throw new Error('sendMessage requires channelId')
+  }
+
+  // 已经是完整 qqbot target，直接用
+  if (QQBOT_TARGET_PREFIXES.some(p => channelId.startsWith(p))) {
+    return channelId
+  }
+
+  // 配置了前缀，拼接
+  if (OPENCLAW_MESSAGE_TARGET_PREFIX) {
+    return `${OPENCLAW_MESSAGE_TARGET_PREFIX}${channelId}`
+  }
+
+  // 没配置前缀，原样返回（适配未知格式或测试场景）
+  return channelId
+}
+
+function sessionKeyToTarget(sessionKey) {
+  if (!sessionKey) return null
+
+  // sessionKey 格式: agent:<mainKey>:qqbot:<chatType>:<openId>
+  // chatType: direct → c2c, group → group, channel → channel
+  const parts = sessionKey.split(':')
+  if (parts.length < 5 || parts[2] !== 'qqbot') return null
+
+  const chatType = parts[3]
+  const openId = parts.slice(4).join(':')
+
+  const typeMap = { direct: 'c2c', group: 'group', channel: 'channel' }
+  const mapped = typeMap[chatType]
+  if (!mapped) return null
+
+  return `qqbot:${mapped}:${openId}`
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  if (!circuitBreaker.canRequest()) {
+    throw new Error('OpenClaw circuit breaker is open, skipping request')
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal })
+    clearTimeout(timer)
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      const err = new Error(`OpenClaw HTTP ${res.status}: ${text}`)
+      circuitBreaker.onFailure()
+      throw err
+    }
+
+    circuitBreaker.onSuccess()
+    return res
+  } catch (err) {
+    clearTimeout(timer)
+    if (err.name === 'AbortError') {
+      const timeoutErr = new Error(`OpenClaw request timed out after ${timeoutMs}ms`)
+      circuitBreaker.onFailure()
+      throw timeoutErr
+    }
+    circuitBreaker.onFailure()
+    throw err
+  }
+}
+
+async function invokeTool(tool, args = {}, options = {}) {
+  const {
+    action,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    sessionKey = OPENCLAW_DEFAULT_SESSION_KEY || undefined,
+    dryRun = false,
+    headers = {}
+  } = options
+
+  const res = await fetchWithTimeout(
+    `${OPENCLAW_BASE_URL}/tools/invoke`,
+    {
+      method: 'POST',
+      headers: buildHeaders(headers),
+      body: JSON.stringify(buildInvokeBody({ tool, action, args, sessionKey, dryRun }))
+    },
+    timeoutMs
+  )
+
+  return res.json()
+}
+
+async function sendMessage({ channelId, content, sessionKey, timeoutMs = 10_000 }) {
+  const resolvedTarget = buildMessageTarget(channelId || sessionKeyToTarget(sessionKey))
+  const args = {
+    [OPENCLAW_MESSAGE_TARGET_ARG]: resolvedTarget,
+    [OPENCLAW_MESSAGE_CONTENT_ARG]: content
+  }
+
+  return invokeTool(OPENCLAW_MESSAGE_TOOL, args, {
+    action: OPENCLAW_MESSAGE_ACTION,
+    sessionKey,
+    timeoutMs
+  })
+}
+
+module.exports = { invokeTool, sendMessage, buildMessageTarget, sessionKeyToTarget }
