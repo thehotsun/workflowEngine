@@ -1,6 +1,7 @@
 'use strict'
 
 const { enqueueDlq } = require('../persist/repos/dlq.repo')
+const logger = require('../utils/logger')
 
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_BASE_DELAY_MS = 1000
@@ -15,20 +16,23 @@ async function withRetry({ fn, stepName, runId, maxRetries = DEFAULT_MAX_RETRIES
     } catch (err) {
       lastError = err
 
-      // 输入缺失/显式不可重试错误：直接失败，不做退避重试
       if (err?.notRetryable || err?.isInputError) {
+        logger.warn({ runId, stepName, attempt, err: err.message }, 'Step failed with non-retryable error')
         break
       }
 
       attempt++
-      if (attempt > maxRetries) break
-      // 指数退避
+      if (attempt > maxRetries) {
+        logger.error({ runId, stepName, attempt, maxRetries, err: err.message }, 'Step retries exhausted')
+        break
+      }
+
       const delay = baseDelay * Math.pow(2, attempt - 1)
+      logger.warn({ runId, stepName, attempt, maxRetries, delayMs: delay, err: err.message }, 'Step failed, scheduling retry')
       await sleep(delay)
     }
   }
 
-  // 超过重试次数（或不可重试），写入死信队列
   enqueueDlq({ runId, stepName, error: lastError?.message || String(lastError), retryCount: attempt })
   throw lastError
 }

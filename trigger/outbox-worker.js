@@ -58,17 +58,20 @@ async function processOutbox() {
       const retries = (msg.retry_count || 0) + 1
       markSending(msg.id, retries)
 
+      const startedAt = Date.now()
       try {
         await openclawClient.sendMessage({ channelId: msg.channel_id, content: msg.content })
         markSent(msg.id)
-        logger.info({ msgId: msg.id, channelId: msg.channel_id }, 'Message sent')
+        const durationMs = Date.now() - startedAt
+        logger.info({ msgId: msg.id, channelId: msg.channel_id, durationMs }, 'Message sent')
       } catch (err) {
+        const durationMs = Date.now() - startedAt
         if (retries >= MAX_SEND_RETRIES) {
           markMessageFailed(msg.id, retries)
-          logger.error({ msgId: msg.id, err: err.message }, 'Message send failed, max retries reached')
+          logger.error({ msgId: msg.id, retries, durationMs, err: err.message }, 'Message send failed, max retries reached')
         } else {
           markMessageRetry(msg.id, retries)
-          logger.warn({ msgId: msg.id, retries, err: err.message }, 'Message send failed, will retry')
+          logger.warn({ msgId: msg.id, retries, durationMs, err: err.message }, 'Message send failed, will retry')
         }
       }
     }

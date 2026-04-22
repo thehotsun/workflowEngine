@@ -1,7 +1,7 @@
 'use strict'
 
 const fastify = require('fastify')({ logger: false })
-const WorkflowEngine = require('./core/engine')
+const WorkflowEngine = require('./core/engine').WorkflowEngine
 const { getPendingEvents, markFailed } = require('./persist/repos/event.repo')
 const { mapToConversation } = require('./openclaw/session-mapper')
 const eventsRoutes = require('./trigger/webhook')
@@ -28,7 +28,7 @@ fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (req, bo
   }
 })
 
-fastify.register(eventsRoutes)
+fastify.register(eventsRoutes, { engine })
 
 // Event 消费循环：每秒轮询 event_inbox，异步执行 workflow
 const POLL_INTERVAL_MS = 1000

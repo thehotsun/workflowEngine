@@ -55,6 +55,9 @@ const circuitBreaker = {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000
+const QQBOT_TOKEN_TIMEOUT_MS = 8_000
+const QQBOT_SEND_TIMEOUT_MS = 10_000
+const QQBOT_SLOW_THRESHOLD_MS = 3_000
 
 function buildHeaders(extraHeaders = {}) {
   const headers = {
@@ -112,25 +115,48 @@ function buildMessageTarget(channelId) {
  * 获取 QQ Bot Access Token
  */
 async function getQQBotAccessToken() {
-  const res = await fetch('https://bots.qq.com/app/getAppAccessToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      appId: QQBOT_APP_ID,
-      clientSecret: QQBOT_CLIENT_SECRET
+  const startedAt = Date.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), QQBOT_TOKEN_TIMEOUT_MS)
+
+  try {
+    const res = await fetch('https://bots.qq.com/app/getAppAccessToken', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appId: QQBOT_APP_ID,
+        clientSecret: QQBOT_CLIENT_SECRET
+      }),
+      signal: controller.signal
     })
-  })
-  
-  if (!res.ok) {
-    throw new Error(`QQ Bot token request failed: ${res.status}`)
+
+    if (!res.ok) {
+      throw new Error(`QQ Bot token request failed: ${res.status}`)
+    }
+
+    const data = await res.json()
+    if (!data.access_token) {
+      throw new Error('QQ Bot token response missing access_token')
+    }
+
+    const durationMs = Date.now() - startedAt
+    if (durationMs >= QQBOT_SLOW_THRESHOLD_MS) {
+      logger.warn({ durationMs }, 'QQ Bot token request slow')
+    } else {
+      logger.debug({ durationMs }, 'QQ Bot token request ok')
+    }
+    return data.access_token
+  } catch (err) {
+    const durationMs = Date.now() - startedAt
+    if (err.name === 'AbortError') {
+      logger.error({ durationMs, timeoutMs: QQBOT_TOKEN_TIMEOUT_MS }, 'QQ Bot token request timed out')
+      throw new Error(`QQ Bot token request timed out after ${QQBOT_TOKEN_TIMEOUT_MS}ms`)
+    }
+    logger.error({ durationMs, err: err.message }, 'QQ Bot token request failed')
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
-  
-  const data = await res.json()
-  if (!data.access_token) {
-    throw new Error('QQ Bot token response missing access_token')
-  }
-  
-  return data.access_token
 }
 
 /**
@@ -138,27 +164,49 @@ async function getQQBotAccessToken() {
  */
 async function sendQQBotC2CMessage(accessToken, openid, content) {
   const url = `https://api.sgroup.qq.com/v2/users/${openid}/messages`
-  
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `QQBot ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      content,
-      msg_type: 0,  // 文本消息
-      msg_id: '',   // 主动消息不需要 msg_id
-      event_id: ''
+  const startedAt = Date.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), QQBOT_SEND_TIMEOUT_MS)
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `QQBot ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        content,
+        msg_type: 0,
+        msg_id: '',
+        event_id: ''
+      }),
+      signal: controller.signal
     })
-  })
-  
-  if (!res.ok) {
-    const error = await res.text().catch(() => 'unknown error')
-    throw new Error(`QQ Bot send message failed: ${res.status} ${error}`)
+
+    if (!res.ok) {
+      const error = await res.text().catch(() => 'unknown error')
+      throw new Error(`QQ Bot send message failed: ${res.status} ${error}`)
+    }
+
+    const data = await res.json()
+    const durationMs = Date.now() - startedAt
+    if (durationMs >= QQBOT_SLOW_THRESHOLD_MS) {
+      logger.warn({ durationMs, openid }, 'QQ Bot c2c send slow')
+    } else {
+      logger.debug({ durationMs, openid }, 'QQ Bot c2c send ok')
+    }
+    return data
+  } catch (err) {
+    const durationMs = Date.now() - startedAt
+    if (err.name === 'AbortError') {
+      logger.error({ durationMs, timeoutMs: QQBOT_SEND_TIMEOUT_MS, openid }, 'QQ Bot c2c send timed out')
+      throw new Error(`QQ Bot c2c send timed out after ${QQBOT_SEND_TIMEOUT_MS}ms`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
-  
-  return res.json()
 }
 
 /**
@@ -166,27 +214,49 @@ async function sendQQBotC2CMessage(accessToken, openid, content) {
  */
 async function sendQQBotGroupMessage(accessToken, groupOpenid, content) {
   const url = `https://api.sgroup.qq.com/v2/groups/${groupOpenid}/messages`
-  
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `QQBot ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      content,
-      msg_type: 0,  // 文本消息
-      msg_id: '',   // 主动消息不需要 msg_id
-      event_id: ''
+  const startedAt = Date.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), QQBOT_SEND_TIMEOUT_MS)
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `QQBot ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        content,
+        msg_type: 0,
+        msg_id: '',
+        event_id: ''
+      }),
+      signal: controller.signal
     })
-  })
-  
-  if (!res.ok) {
-    const error = await res.text().catch(() => 'unknown error')
-    throw new Error(`QQ Bot send group message failed: ${res.status} ${error}`)
+
+    if (!res.ok) {
+      const error = await res.text().catch(() => 'unknown error')
+      throw new Error(`QQ Bot send group message failed: ${res.status} ${error}`)
+    }
+
+    const data = await res.json()
+    const durationMs = Date.now() - startedAt
+    if (durationMs >= QQBOT_SLOW_THRESHOLD_MS) {
+      logger.warn({ durationMs, groupOpenid }, 'QQ Bot group send slow')
+    } else {
+      logger.debug({ durationMs, groupOpenid }, 'QQ Bot group send ok')
+    }
+    return data
+  } catch (err) {
+    const durationMs = Date.now() - startedAt
+    if (err.name === 'AbortError') {
+      logger.error({ durationMs, timeoutMs: QQBOT_SEND_TIMEOUT_MS, groupOpenid }, 'QQ Bot group send timed out')
+      throw new Error(`QQ Bot group send timed out after ${QQBOT_SEND_TIMEOUT_MS}ms`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
-  
-  return res.json()
 }
 
 function sessionKeyToTarget(sessionKey) {
@@ -269,22 +339,20 @@ async function invokeTool(tool, args = {}, options = {}) {
  */
 async function sendMessage({ channelId, content, sessionKey, timeoutMs = 10_000 }) {
   const resolvedTarget = buildMessageTarget(channelId || sessionKeyToTarget(sessionKey))
-  
+  const startedAt = Date.now()
+
   logger.info({ target: resolvedTarget, content: content.slice(0, 50) }, '📤 发送 QQ 消息')
-  
+
   try {
-    // 解析 target 格式：qqbot:c2c:openid 或 qqbot:group:groupid
     const match = resolvedTarget.match(/^qqbot:(c2c|group|channel):(.+)$/i)
     if (!match) {
       throw new Error(`Invalid QQ Bot target format: ${resolvedTarget}`)
     }
-    
+
     const [, type, openId] = match
-    
-    // 获取 access token
+
     const accessToken = await getQQBotAccessToken()
-    
-    // 根据类型发送消息
+
     let result
     if (type === 'c2c') {
       result = await sendQQBotC2CMessage(accessToken, openId, content)
@@ -293,17 +361,18 @@ async function sendMessage({ channelId, content, sessionKey, timeoutMs = 10_000 
     } else {
       throw new Error(`QQ Bot message type not supported: ${type}`)
     }
-    
-    logger.info({ channelId: resolvedTarget, messageId: result.id }, '✅ QQ 消息发送成功')
-    
+
+    const durationMs = Date.now() - startedAt
+    logger.info({ channelId: resolvedTarget, messageId: result.id, durationMs }, '✅ QQ 消息发送成功')
+
     return {
       ok: true,
       messageId: result.id,
       timestamp: result.timestamp
     }
-    
   } catch (err) {
-    logger.error({ channelId: resolvedTarget, err: err.message }, '❌ QQ 消息发送失败')
+    const durationMs = Date.now() - startedAt
+    logger.error({ channelId: resolvedTarget, durationMs, err: err.message }, '❌ QQ 消息发送失败')
     throw err
   }
 }

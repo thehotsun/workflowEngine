@@ -10,6 +10,7 @@ const {
   MAX_CONCURRENT_EMBED_CALLS,
   MAX_CONCURRENT_LLM_CALLS
 } = require('../config')
+const logger = require('../utils/logger')
 
 // 并发令牌池：控制 embedding 批并发
 class Semaphore {
@@ -39,6 +40,8 @@ class Semaphore {
   }
 }
 
+const LLM_SLOW_THRESHOLD_MS = 10_000
+const EMBED_SLOW_THRESHOLD_MS = 5_000
 const embedSemaphore = new Semaphore(MAX_CONCURRENT_EMBED_CALLS || 5)
 const chatSemaphore = new Semaphore(MAX_CONCURRENT_LLM_CALLS || 3)
 
@@ -57,10 +60,13 @@ class BailianModel extends BaseModel {
   get name() { return 'bailian' }
 
   async chat(messages, options = {}) {
+    const startedAt = Date.now()
+    const model = options.model || BAILIAN_CHAT_MODEL
+    logger.debug({ model, msgCount: messages.length }, 'LLM chat start')
     await chatSemaphore.acquire()
     try {
       const response = await this.client.chat.completions.create({
-        model: options.model || BAILIAN_CHAT_MODEL,
+        model,
         messages,
         temperature: options.temperature ?? 0.7,
         max_tokens: options.maxTokens
@@ -71,12 +77,21 @@ class BailianModel extends BaseModel {
         throw new Error('Bailian chat: empty response from model')
       }
 
+      const durationMs = Date.now() - startedAt
+      const totalTokens = response.usage?.total_tokens
+      if (durationMs >= LLM_SLOW_THRESHOLD_MS) {
+        logger.warn({ model, durationMs, totalTokens }, 'LLM chat slow')
+      } else {
+        logger.debug({ model, durationMs, totalTokens }, 'LLM chat ok')
+      }
+
       return {
         content: content || '',
         usage: response.usage || null
       }
     } catch (err) {
-      // 包装成统一错误格式，便于上层区分 API 错误
+      const durationMs = Date.now() - startedAt
+      logger.error({ model, durationMs, err: err.message }, 'LLM chat failed')
       const wrapped = new Error(`BailianModel.chat failed: ${err.message}`)
       wrapped.cause = err
       wrapped.isModelError = true
@@ -87,14 +102,21 @@ class BailianModel extends BaseModel {
   }
 
   async embedding(text) {
+    const startedAt = Date.now()
     await embedSemaphore.acquire()
     try {
       const response = await this.client.embeddings.create({
         model: BAILIAN_EMBED_MODEL,
         input: text
       })
+      const durationMs = Date.now() - startedAt
+      if (durationMs >= EMBED_SLOW_THRESHOLD_MS) {
+        logger.warn({ durationMs }, 'Embedding request slow')
+      }
       return response.data?.[0]?.embedding || []
     } catch (err) {
+      const durationMs = Date.now() - startedAt
+      logger.error({ durationMs, err: err.message }, 'Embedding request failed')
       const wrapped = new Error(`BailianModel.embedding failed: ${err.message}`)
       wrapped.cause = err
       wrapped.isModelError = true
@@ -111,6 +133,8 @@ class BailianModel extends BaseModel {
 
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
       const batch = texts.slice(i, i + BATCH_SIZE)
+      const batchStartedAt = Date.now()
+      const batchIndex = Math.floor(i / BATCH_SIZE)
       await embedSemaphore.acquire()
       try {
         const response = await this.client.embeddings.create({
@@ -119,7 +143,13 @@ class BailianModel extends BaseModel {
         })
         const batchResult = (response.data || []).map(item => item.embedding)
         results.push(...batchResult)
+        const durationMs = Date.now() - batchStartedAt
+        if (durationMs >= EMBED_SLOW_THRESHOLD_MS) {
+          logger.warn({ batchIndex, batchSize: batch.length, durationMs }, 'Embeddings batch slow')
+        }
       } catch (err) {
+        const durationMs = Date.now() - batchStartedAt
+        logger.error({ batchIndex, batchSize: batch.length, durationMs, err: err.message }, 'Embeddings batch failed')
         const wrapped = new Error(`BailianModel.embeddings batch failed: ${err.message}`)
         wrapped.cause = err
         wrapped.isModelError = true

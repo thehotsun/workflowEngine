@@ -57,6 +57,9 @@ function isDuplicate(messageId) {
 
 /**
  * 转发消息到工作流引擎
+ * 返回：{ forwarded: bool, eventId: string|null }
+ *   - forwarded: 是否成功转发
+ *   - eventId: 引擎返回的 eventId，非 null 表示流程已接管该消息
  */
 async function forward(payload) {
   const headers = { 'Content-Type': 'application/json' }
@@ -74,16 +77,19 @@ async function forward(payload) {
     if (!res.ok) {
       const text = await res.text().catch(() => '')
       console.error(`[my-qq-filter] ❌ 转发失败 HTTP ${res.status}: ${text}`)
-      return false
+      return { forwarded: false, eventId: null }
     }
 
+    const data = await res.json().catch(() => ({}))
+    const eventId = data.eventId || null
+
     console.log(
-      `[my-qq-filter] ✅ 转发成功: ${payload.channelId} | "${payload.text.slice(0, 50)}..."`,
+      `[my-qq-filter] ✅ 转发成功: ${payload.channelId} | "${payload.text.slice(0, 50)}..." | eventId=${eventId}`,
     )
-    return true
+    return { forwarded: true, eventId }
   } catch (err) {
     console.error(`[my-qq-filter] ❌ 转发异常: ${err.message}`)
-    return false
+    return { forwarded: false, eventId: null }
   }
 }
 
@@ -209,7 +215,13 @@ module.exports = function register(api) {
           }
 
           // 转发到工作流引擎
-          await forward(payload)
+          const { forwarded, eventId } = await forward(payload)
+
+          // 如果流程引擎接管了这条消息（返回了 eventId），阻止 openclaw 自动回复
+          if (forwarded && eventId) {
+            logger.info(`[my-qq-filter] 🛑 流程已接管消息 (eventId=${eventId})，阻止 openclaw 默认回复`)
+            return false
+          }
         } catch (err) {
           logger.error(
             `[my-qq-filter] ❌ message_received 处理异常: ${err.message}`,

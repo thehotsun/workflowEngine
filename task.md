@@ -66,16 +66,23 @@
 ### 3.1 端到端主链路（消息触发）
 
 ```text
-OpenClaw / 外部系统
-  -> POST /events/openclaw 或 /events/manual
-  -> normalizeWebhookPayload + verifyWebhookAuth
-  -> event_inbox (pending)
+my-qq-filter（OpenClaw 插件）
+  -> message_received hook 触发
+  -> POST /events/openclaw（转发到工作流引擎）
+  -> verifyWebhookAuth + normalizeWebhookPayload
+  -> shouldProcessMessage 拦截器检查（webhook 层，复用 workflow trigger.match）
+      - 不匹配任何流程触发条件 -> 返回 eventId: null -> openclaw 自行回复
+      - 匹配 -> 继续
+  -> createEvent -> event_inbox (pending)
+  -> 返回 eventId（非 null）-> my-qq-filter 阻止 openclaw 默认回复
   -> pollEvents() 拉取并发消费
-  -> WorkflowEngine.matchWorkflow + handleEvent
+  -> WorkflowEngine.handleEvent
+      - shouldProcessMessage 兜底检查（兼容 /events/manual 等非 webhook 来源）
+      - matchWorkflow 流程匹配（与拦截器共用同一套 trigger.match）
   -> workflow_runs / step_runs 持久化
   -> publish.step 写 message_outbox
   -> outbox-worker (事件驱动 + 轮询兜底)
-  -> OpenClaw /tools/invoke
+  -> openclaw/client.js 直接调用 QQ Bot API（c2c / group）
   -> 下游渠道（QQ 等）
 ```
 
@@ -106,10 +113,23 @@ index.js start()
 
 ### 3.4 关键运行特征
 
-- 事件消费采用“轮询 + 批并发 + 进程内互斥锁（isProcessing）”。
-- step 执行采用“串行调度 + 每步独立持久化 + 重试/超时保护”。
-- 出站发送采用“Outbox 先落库后发送”。
+- 事件消费采用”轮询 + 批并发 + 进程内互斥锁（isProcessing）”。
+- step 执行采用”串行调度 + 每步独立持久化 + 重试/超时保护”。
+- 出站发送采用”直接调用 QQ Bot API”（c2c 私聊 / group 群聊），不再经过 OpenClaw `/tools/invoke`。
 - 恢复逻辑按 `step_index` 计算续跑位点，避免重复执行已完成步骤。
+
+### 3.5 消息拦截器机制
+
+拦截器逻辑由 `core/engine.js` 的 `buildInterceptor(workflows)` 工厂生成，在 `WorkflowEngine` 构造时绑定为实例方法 `engine.shouldProcessMessage`，**复用各 workflow 的 `trigger.match` 作为白名单**，不单独维护关键词列表。
+
+**判断逻辑**：消息能被任意一个已注册 workflow 的 `trigger.match` 匹配 → 放行；否则 → 交还 openclaw 自行回复。
+
+| 调用层 | 位置 | 时机 | 作用 |
+|---|---|---|---|
+| webhook 层（主路径） | `trigger/webhook.js` createEvent 前 | 同步，入库前 | 不通过返回 `eventId: null`，my-qq-filter 不阻止 openclaw 回复 |
+| 引擎层（兜底） | `core/engine.js` handleEvent 前 | 异步轮询后 | 覆盖 `/events/manual` 等非 webhook 来源 |
+
+**扩展方式**：新增 workflow 并在 `index.js` 注册后，拦截器自动从其 `trigger.match` 中派生匹配规则，无需改动 engine.js。时间过滤、用户白名单等扩展规则可在 `buildInterceptor` 内追加。
 
 ---
 
@@ -121,7 +141,7 @@ workflow-engine/
 ├── config/
 │   └── index.js                   # 环境变量读取与默认值
 ├── core/
-│   ├── engine.js                  # 工作流核心：匹配、run/step 执行、恢复、onError
+│   ├── engine.js                  # 工作流核心：拦截器配置、匹配、run/step 执行、恢复、onError
 │   ├── dispatcher.js              # step 顺序调度器
 │   ├── retry.js                   # 指数退避重试 + DLQ 入队
 │   ├── state-machine.js           # workflow run 状态流转校验
@@ -147,10 +167,10 @@ workflow-engine/
 │   └── router.js                  # taskType -> model 路由
 ├── openclaw/
 │   ├── adapter.js                 # webhook payload 标准化 + 鉴权
-│   ├── client.js                  # /tools/invoke 调用 + 熔断器
+│   ├── client.js                  # QQ Bot API 直接发送（c2c / group）+ 熔断器
 │   ├── session-mapper.js          # source/channel/user -> conversation
 │   └── hooks/
-│       └── my-qq-filter.js        # OpenClaw 侧插件示例
+│       └── my-qq-filter.js        # OpenClaw 插件：转发消息 + 根据 eventId 阻止默认回复
 ├── rag/
 │   ├── chunker.js                 # Markdown 分块
 │   ├── embedder.js                # embedding 调用封装
@@ -169,7 +189,7 @@ workflow-engine/
 │       ├── dlq.repo.js            # dlq 读写
 │       └── knowledge.repo.js      # knowledge_* 读写
 ├── trigger/
-│   ├── webhook.js                 # /events/openclaw /events/manual /health
+│   ├── webhook.js                 # /events/openclaw（含拦截器检查） /events/manual /health
 │   ├── outbox-worker.js           # 发送 worker（事件驱动 + 轮询）
 │   └── scheduler.js               # cron 触发 + WAL checkpoint
 ├── workflows/

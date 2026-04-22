@@ -13,9 +13,33 @@ const { outboxEmitter } = require('../trigger/outbox-worker')
 const { buildStep } = require('../steps')
 const logger = require('../utils/logger')
 
+// ==================== 拦截器 ====================
+// 白名单逻辑：复用已注册 workflow 的 trigger.match，
+// 只要消息能匹配任意一个流程的触发条件，就放行进入引擎。
+// 时间过滤和用户白名单暂不启用，未来按需在此扩展。
+function buildInterceptor(workflows) {
+  return function shouldProcessMessage(event) {
+    const { text, userId, channelId } = event
+    const matched = workflows.some(flow => {
+      if (!flow.trigger) return false
+      if (flow.trigger.type && flow.trigger.type !== event.triggerType) return false
+      if (flow.trigger.match instanceof RegExp) return flow.trigger.match.test(text || '')
+      return false
+    })
+
+    if (!matched) {
+      logger.info({ channelId, userId, text: text?.slice(0, 30) }, '⏭️ 拦截：不匹配任何流程触发条件，交还 openclaw')
+      return { allowed: false, reason: 'no_workflow_match' }
+    }
+
+    return { allowed: true }
+  }
+}
+
 class WorkflowEngine {
   constructor({ workflows }) {
     this.workflows = workflows || []
+    this.shouldProcessMessage = buildInterceptor(this.workflows)
   }
 
   matchWorkflow(event) {
@@ -28,6 +52,14 @@ class WorkflowEngine {
   }
 
   async handleEvent({ event, conversation, inboxEventId }) {
+    // 拦截器：复用 workflow trigger.match 做前置判断，不匹配任何流程则交还 openclaw
+    const interceptResult = this.shouldProcessMessage(event)
+    if (!interceptResult.allowed) {
+      logger.info({ inboxEventId, channelId: event.channelId, reason: interceptResult.reason }, '🚫 消息被拦截，跳过流程匹配')
+      if (inboxEventId) markDone(inboxEventId)
+      return null
+    }
+
     const workflow = this.matchWorkflow(event)
     if (!workflow) {
       logger.info({ inboxEventId }, 'No workflow matched event')
@@ -173,9 +205,14 @@ class WorkflowEngine {
 
   async executeWithTimeout(step, context, stepDef) {
     const timeoutMs = stepDef.timeout || step.timeout || 30000
+    const runId = context.get('_runId')
+    logger.debug({ runId, stepName: step.name, timeoutMs }, 'Step executing (timeout set)')
     return Promise.race([
       step.execute(context, stepDef),
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`Step timeout after ${timeoutMs}ms`)), timeoutMs))
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error(`Step timeout after ${timeoutMs}ms`)),
+        timeoutMs
+      ))
     ])
   }
 
@@ -304,4 +341,4 @@ function assertRequiredContextKeys(context, keys, { stepName, stepIndex, workflo
   }
 }
 
-module.exports = WorkflowEngine
+module.exports = { WorkflowEngine, buildInterceptor }
