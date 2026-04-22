@@ -227,9 +227,39 @@ node rag/ingest.js
 
 ### 2.10 启动服务
 
+**方式一：直接运行（调试用）**
+
 ```bash
 pnpm start
 # 或 node index.js
+```
+
+**方式二：PM2 守护进程（生产推荐）**
+
+```bash
+# 安装 PM2（全局，仅首次）
+npm install -g pm2
+
+# 创建日志目录
+mkdir -p logs
+
+# 启动（生产模式，从 .env 读取变量）
+pnpm run pm2:start
+# 或直接: pm2 start ecosystem.config.js --env production
+
+# 开机自启（执行后按提示运行 sudo env ... pm2 startup 命令）
+pm2 startup
+pm2 save
+```
+
+**PM2 常用命令**
+
+```bash
+pnpm run pm2:status    # 查看进程状态
+pnpm run pm2:logs      # 实时查看日志
+pnpm run pm2:restart   # 重启（代码更新后）
+pnpm run pm2:reload    # 零停机重载
+pnpm run pm2:stop      # 停止
 ```
 
 ### 2.11 健康检查
