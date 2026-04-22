@@ -25,7 +25,7 @@ function getDb() {
 
   // 加载 sqlite-vec 扩展（向量搜索）
   try {
-    _db.loadExtension('vec0')
+    require('sqlite-vec').load(_db)
     _vecAvailable = true
   } catch (e) {
     _vecAvailable = false

@@ -104,9 +104,9 @@ class BailianModel extends BaseModel {
     }
   }
 
-  // 批量 embedding，每批最多 20 个，受并发令牌控制
+  // 批量 embedding，每批最多 10 个，受并发令牌控制
   async embeddings(texts = []) {
-    const BATCH_SIZE = 20
+    const BATCH_SIZE = 10
     const results = []
 
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {

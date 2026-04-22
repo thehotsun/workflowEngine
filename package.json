@@ -10,13 +10,20 @@
     "ingest": "node rag/ingest.js"
   },
   "dependencies": {
-    "fastify": "^4.26.0",
     "better-sqlite3": "^9.4.3",
-    "openai": "^4.28.0",
     "dotenv": "^16.4.4",
+    "fastify": "^4.26.0",
     "node-cron": "^3.0.3",
+    "openai": "^4.28.0",
     "pino": "^8.19.0",
     "pino-pretty": "^11.0.0",
+    "sqlite-vec": "^0.1.9",
     "uuid": "^9.0.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "sqlite-vec"
+    ]
   }
 }

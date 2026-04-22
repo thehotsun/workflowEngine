@@ -53,6 +53,7 @@ async function ingestKnowledge(dir = KNOWLEDGE_DIR) {
       chunkId: chunk.id,
       embedding: vectors[i]
     })))
+    console.log(`[ingest] ${path.basename(filePath)} done (${chunkRows.length} chunks)`)
   }
 
   // 处理被删除的文件
