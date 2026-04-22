@@ -196,6 +196,7 @@ class WorkflowEngine {
         durationMs: Date.now() - started,
         finishedAt: Date.now()
       })
+      err.stepName = stepName
       throw err
     } finally {
       // 恢复父步骤的 _currentStepIndex，避免子步骤执行时覆盖父步骤状态
@@ -283,7 +284,8 @@ class WorkflowEngine {
     const channelId = context.get('channelId')
     if (!channelId) return
 
-    const content = `⚠️ 工作流执行失败\n流程：${workflow.name || workflow.id}\nrunId：${runId}\n原因：${err.message}`
+    const stepInfo = err.stepName ? `\n失败步骤：${err.stepName}` : ''
+    const content = `⚠️ 工作流执行失败\n流程：${workflow.name || workflow.id}\nrunId：${runId}${stepInfo}\n原因：${err.message}`
     const msgId = enqueueMessage({ runId, channelId, content })
     outboxEmitter.emit('new_message', { msgId, runId })
   }
