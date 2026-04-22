@@ -16,7 +16,7 @@ module.exports = {
       restart_delay: 2000,
 
       // 内存超限自动重启（防内存泄漏）
-      max_memory_restart: '512M',
+      max_memory_restart: '1G',
 
       // 环境变量（从 .env 文件加载，此处仅覆盖 NODE_ENV）
       env: {
