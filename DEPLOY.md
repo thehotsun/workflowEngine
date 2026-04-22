@@ -120,7 +120,7 @@ BAILIAN_EMBED_MODEL=text-embedding-v4
 | `OPENCLAW_MESSAGE_ACTION` | `send` | 动作名 |
 | `OPENCLAW_MESSAGE_TARGET_ARG` | `target` | 目标参数名 |
 | `OPENCLAW_MESSAGE_CONTENT_ARG` | `content` | 内容参数名 |
-| `OPENCLAW_MESSAGE_TARGET_PREFIX` | `qqbot:group:` | 消息目标前缀，群消息填 `qqbot:group:`，私聊填 `qqbot:c2c:` |
+| `OPENCLAW_MESSAGE_TARGET_PREFIX` | `qqbot:` | 消息目标前缀` |
 | `OPENCLAW_MESSAGE_CHANNEL` | `qqbot` | 渠道名 |
 
 ```env
@@ -132,7 +132,7 @@ OPENCLAW_MESSAGE_TOOL=message
 OPENCLAW_MESSAGE_ACTION=send
 OPENCLAW_MESSAGE_TARGET_ARG=target
 OPENCLAW_MESSAGE_CONTENT_ARG=content
-OPENCLAW_MESSAGE_TARGET_PREFIX=qqbot:group:
+OPENCLAW_MESSAGE_TARGET_PREFIX=qqbot:
 OPENCLAW_MESSAGE_CHANNEL=qqbot
 OPENCLAW_ACCOUNT_ID=
 ```
