@@ -260,10 +260,13 @@ class WorkflowContext {
 module.exports = {
   id: 'article_flow',
   name: '公众号文章生成',
+  config: {
+    ragQuery: { topK: 5 } // 消费方：steps/rag-query.step.js
+  },
   trigger: { type: 'message', match: /.../ },
   steps: [
     { type: 'topic' },
-    { type: 'rag-query', input: ctx => ({ query: ctx.get('topic') }), output: 'ragResults', topK: 5 },
+    { type: 'rag-query', input: ctx => ({ query: ctx.get('topic') }), output: 'ragResults' },
     { type: 'conditional', condition: ctx => true, ifTrue: {...}, ifFalse: {...} },
     { type: 'write' },
     { type: 'polish' },
@@ -277,8 +280,17 @@ module.exports = {
 
 - `trigger.type` 与事件 `triggerType` 精确匹配。
 - `trigger.match` 当前要求为可执行 `RegExp`。
+- `config` 为 workflow 级配置对象，运行时注入 `context._config` 供 step 读取。
 - `steps[*].type` 必须在 `steps/index.js` 注册。
 - `onError` 当前实现策略为 `notify-and-dlq`。
+
+### workflow config 与 step 消费契约
+
+为避免配置漂移，`config` 与消费方必须双向声明：
+
+1. **workflow 端声明消费方**：每个 config key 行内注释 `消费方：steps/xxx.step.js`
+2. **step 端声明 config 依赖**：在 step 文件头使用 `@workflow-config` 列出消费的 `_config.xxx` 路径
+3. **读取优先级约定**：`stepDef` 内联参数 > `_config` > step 内默认值
 
 ## 5.4 InternalEvent Interface（`openclaw/adapter.js` 标准化输出）
 

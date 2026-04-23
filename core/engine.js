@@ -75,8 +75,10 @@ class WorkflowEngine {
     })
 
     const conversationHistory = loadConversationHistory(conversation)
+    const workflowConfig = normalizeWorkflowConfig(workflow?.config)
     const initialContext = {
       _runId: runId,
+      _config: workflowConfig,
       event,
       conversation,
       input: event.text,
@@ -228,7 +230,8 @@ class WorkflowEngine {
       if (!workflow) continue
 
       const contextData = run.context_json ? JSON.parse(run.context_json) : {}
-      const context = new WorkflowContext({ ...contextData, _runId: run.id })
+      const workflowConfig = normalizeWorkflowConfig(workflow?.config)
+      const context = new WorkflowContext({ ...contextData, _runId: run.id, _config: workflowConfig })
       const completed = getCompletedStepRuns(run.id)
 
       // 恢复 conversation，避免恢复执行时丢失多轮历史
@@ -289,6 +292,15 @@ class WorkflowEngine {
     const msgId = enqueueMessage({ runId, channelId, content })
     outboxEmitter.emit('new_message', { msgId, runId })
   }
+}
+
+/**
+ * 将 workflow.config 标准化为纯对象，注入 context._config
+ * 若未定义则返回空对象，保证 step 内 context.get('_config') 始终可用
+ */
+function normalizeWorkflowConfig(config) {
+  if (config && typeof config === 'object' && !Array.isArray(config)) return { ...config }
+  return {}
 }
 
 function loadConversationHistory(conversation) {

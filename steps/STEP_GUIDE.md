@@ -1,6 +1,6 @@
 # Step 开发指南：约束规则与新增步骤说明
 
-> 适用版本：v1.2+
+> 适用版本：v1.3+
 > 文档路径：`steps/STEP_GUIDE.md`
 
 ---
@@ -18,7 +18,8 @@
 9. [现有 Step 速查表](#9-现有-step-速查表)
 10. [新增 Step 完整示例](#10-新增-step-完整示例)
 11. [Workflow 中使用新 Step](#11-workflow-中使用新-step)
-12. [常见错误与排查](#12-常见错误与排查)
+12. [Workflow 级 config 约定](#12-workflow-级-config-约定)
+13. [常见错误与排查](#13-常见错误与排查)
 
 ---
 
@@ -99,6 +100,7 @@ Engine 启动时会将以下 key 注入 context，所有 Step 均可直接使用
 | `userId` | `string` | 发送者 ID |
 | `conversationHistory` | `array` | 多轮对话历史（最近 10 条） |
 | `_runId` | `number` | 当前 workflow run 的数据库 ID |
+| `_config` | `object` | 当前 workflow 的配置对象（来自 `workflow.config`，未配置时为 `{}`） |
 | `conversation` | `object` | 会话记录（来自 DB） |
 
 `_` 前缀的 key 为引擎内部使用，Step 可读取但不应修改。
@@ -235,7 +237,7 @@ Builder 函数的第二个参数 `deps` 包含：
 | type | requires（类声明） | provides | retryable | timeout | 说明 |
 |---|---|---|---|---|---|
 | `topic` | `input` | `topic` | true | 20s | 从用户输入提炼主题（LLM） |
-| `rag-query` | `topic` | `ragResults` | true | 20s | 知识库向量检索 |
+| `rag-query` | `topic` | `ragResults` | true | 20s | 知识库向量检索（`stepDef.topK` > `_config.ragQuery.topK` > `5`） |
 | `skill-proxy` | —（由 stepDef.requires 配置） | — | true | 15s | 代理任意 OpenClaw Skill |
 | `hotspot` | — | `hotspot`, `hotspotSuggestions` | true | 30s | 热点话题提炼（LLM） |
 | `write` | `topic` | `article` | true | 60s | 生成文章（LLM） |
@@ -354,7 +356,76 @@ const STEP_REGISTRY = {
 
 ---
 
-## 12. 常见错误与排查
+## 12. Workflow 级 config 约定
+
+### 12.1 机制说明
+
+Workflow 定义文件可在顶层添加 `config` 字段（纯 JSON 对象）。Engine 启动时将其注入 context，key 为 `_config`，所有 step 均可直接读取：
+
+```js
+// workflows/my.flow.js
+module.exports = {
+  id: 'my_flow',
+  config: {
+    ragQuery: {
+      topK: 8   // 消费方：steps/rag-query.step.js
+    }
+    // 其他自定义配置...
+  },
+  trigger: { ... },
+  steps: [ ... ]
+}
+```
+
+```js
+// step 内读取
+const topK = stepDef.topK || context.get('_config')?.ragQuery?.topK || 5
+```
+
+**优先级**：`stepDef` 内联参数 > `_config` 字段 > step 内硬编码默认值
+
+`_config` 遵循 `_` 前缀约定：step 可读取，不应修改。
+
+### 12.2 双向约定规则
+
+使用 `_config` 字段需在**两处**同时声明，形成可追溯的契约：
+
+#### 1. Workflow 定义方（config 的每个 key 需注释消费方）
+
+```js
+config: {
+  ragQuery: {
+    topK: 5    // 消费方：steps/rag-query.step.js
+  },
+  write: {
+    style: '科技感'   // 消费方：steps/write.step.js
+  }
+}
+```
+
+#### 2. Step 消费方（文件头 `@workflow-config` 块声明所有消费的 config 路径）
+
+```js
+/**
+ * write step — 文章生成
+ *
+ * @workflow-config
+ * - _config.write.style: 文章风格提示词（string，可选，默认由 LLM 自主发挥）
+ */
+class WriteStep extends BaseStep { ... }
+```
+
+如果一个 step **不消费任何 `_config` 字段**，则不需要添加 `@workflow-config` 块。
+
+### 12.3 现有 config 字段速查表
+
+| `_config` 路径 | 类型 | 默认值 | 消费 Step | 说明 |
+|---|---|---|---|---|
+| `_config.ragQuery.topK` | `number` | `5` | `rag-query` | 向量检索返回数量 |
+
+---
+
+## 13. 常见错误与排查
 
 ### 错误 1：`Unknown step type: "xxx"`
 
@@ -394,4 +465,4 @@ const STEP_REGISTRY = {
 
 ---
 
-*文档最后更新：2026-04-20*
+*文档最后更新：2026-04-23*
