@@ -3,8 +3,24 @@
 const BaseStep = require('./base.step')
 const modelRouter = require('../models/router')
 
+/**
+ * polish step — 对已有文章进行润色优化
+ * 
+ * 主要功能：
+ * - 保持文章原意
+ * - 提升文字流畅度和可读性
+ * - 优化段落结构
+ * 
+ * @workflow-config
+ * - 无需配置
+ * 
+ * @requires ['article'] - 待润色的文章内容
+ * @provides ['article'] - 润色后的文章
+ */
 class PolishStep extends BaseStep {
   get name() { return 'polish' }
+  get description() { return '对已有文章进行润色：保持原意，提升可读性与段落结构（LLM）' }
+  get category() { return 'content-creation' }
   get timeout() { return 60_000 }
   get requires() { return ['article'] }
   get provides() { return ['article'] }

@@ -8,6 +8,7 @@
     "start": "node index.js",
     "dev": "node --watch index.js",
     "ingest": "node rag/ingest.js",
+    "step-guide:sync": "node scripts/update-step-guide.js",
     "pm2:start": "pm2 start ecosystem.config.js --env production",
     "pm2:stop": "pm2 stop workflow-engine",
     "pm2:restart": "pm2 restart workflow-engine",

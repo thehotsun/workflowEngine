@@ -4,16 +4,24 @@ const BaseStep = require('./base.step')
 const modelRouter = require('../models/router')
 
 /**
- * HotspotStep — 热点话题发现
- *
- * 从 context 中读取 searchResults（由 skill-proxy web-search 写入），
- * 结合可选的 ragResults，让模型提炼出当前热点话题与角度建议，
- * 写入 context.hotspot（字符串）和 context.hotspotSuggestions（数组）。
- *
- * 如果 searchResults / ragResults 都不存在，则仅凭用户原始输入生成建议。
+ * hotspot step — 从搜索结果和知识库中发现热点话题
+ * 
+ * 主要功能：
+ * 1. 分析最新搜索资讯和知识库内容
+ * 2. 提炼当前最值得关注的热点话题（1-3个）
+ * 3. 为每个话题给出适合公众号传播的切入角度
+ * 4. 如果没有搜索/知识库数据，仅凭用户输入生成建议
+ * 
+ * @workflow-config
+ * - 无需配置，自动从context读取
+ * 
+ * @requires ['input'] - 用户原始需求（可选，用于 fallback）
+ * @provides ['hotspot', 'hotspotSuggestions'] - 热点话题和切入建议
  */
 class HotspotStep extends BaseStep {
   get name() { return 'hotspot' }
+  get description() { return '从搜索结果或知识库中提炼热点话题与传播角度（LLM），已有实时热点时请用 fetch-hotspots 代替' }
+  get category() { return 'content-creation' }
   get timeout() { return 30_000 }
   get provides() { return ['hotspot', 'hotspotSuggestions'] }
 

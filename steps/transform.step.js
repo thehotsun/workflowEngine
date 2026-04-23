@@ -12,6 +12,8 @@ const BaseStep = require('./base.step')
  */
 class TransformStep extends BaseStep {
   get name() { return 'transform' }
+  get description() { return '执行轻量数据转换函数 stepDef.run(context)，用于拼装或改写上下文数据' }
+  get category() { return 'flow-control' }
   get retryable() { return false }
 
   async execute(context, stepDef) {

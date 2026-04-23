@@ -18,6 +18,8 @@ const openclawClient = require('../openclaw/client')
  */
 class SkillProxyStep extends BaseStep {
   get name() { return 'skill-proxy' }
+  get description() { return '代理调用 OpenClaw Skill 生态能力，避免为每个外部能力单独实现 step' }
+  get category() { return 'integration' }
   get timeout() { return 15_000 }
 
   async execute(context, stepDef) {

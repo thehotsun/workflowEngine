@@ -15,6 +15,8 @@ class ParallelStep extends BaseStep {
   }
 
   get name() { return 'parallel' }
+  get description() { return '并行执行多个子步骤，等待全部完成后汇总结果；子步骤使用独立 context 快照防并发冲突' }
+  get category() { return 'flow-control' }
   get retryable() { return false }
 
   async execute(context) {

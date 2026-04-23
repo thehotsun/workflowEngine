@@ -148,7 +148,7 @@ workflow-engine/
 │   └── context.js                 # WorkflowContext（get/set/merge/has/snapshot）
 ├── steps/
 │   ├── base.step.js               # Step 抽象接口
-│   ├── index.js                   # Step 注册中心（buildStep/registerStep）
+│   ├── index.js                   # Step 注册中心（buildStep/registerStep/getStepCatalog）
 │   ├── parallel.step.js           # 并行子步骤容器
 │   ├── conditional.step.js        # 条件分支执行器
 │   ├── transform.step.js          # 数据变换
@@ -211,6 +211,8 @@ workflow-engine/
 ```js
 class BaseStep {
   get name() {}
+  get description() { return '未声明' }     // Step 功能自描述，供 AI 编排消费
+  get category() { return 'uncategorized' }  // 分类：content-creation / data-fetch / retrieval / integration / flow-control / output
   get retryable() { return true }
   get timeout() { return 30_000 }
   get requires() { return [] }
@@ -222,6 +224,8 @@ class BaseStep {
 ### 约束与语义
 
 - `name`：进入 `step_runs.step_name` 与日志标识。
+- `description`：Step 的一句话能力描述，作为 AI 选型与编排的主信息源。
+- `category`：Step 分类标签，用于按能力域筛选可用步骤。
 - `retryable`：若 `false`，运行时会将 `maxRetries` 强制为 0。
 - `timeout`：默认超时；可被 `stepDef.timeout` 覆盖。
 - `requires`：声明 context 前置依赖；执行前强校验，缺失即输入错误。
@@ -233,6 +237,22 @@ class BaseStep {
 1. 若配置 `stepDef.output`：将 `result.output` 写入该单键。
 2. 否则当 `result.output` 为对象：`context.merge(result.output)`。
 3. 非对象输出且未配置 `stepDef.output`：不自动落 context。
+
+### Step Catalog（运行时能力目录）
+
+`steps/index.js` 提供 `getStepCatalog()`，用于将注册表中的 Step 能力导出为结构化数组，供 AI 编排或上层 UI/接口消费。
+
+返回字段：
+
+- `type`
+- `description`
+- `category`
+- `requires`
+- `provides`
+- `retryable`
+- `timeout`
+
+约束：Step 的能力元数据以各 Step 类的 getter 为单一真相；文档只做说明，不单独维护另一套能力定义。
 
 ## 5.2 WorkflowContext Interface（`core/context.js`）
 

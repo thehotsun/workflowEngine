@@ -21,6 +21,8 @@ class ConditionalStep extends BaseStep {
   }
 
   get name() { return 'conditional' }
+  get description() { return '条件分支：根据 context 动态选择执行 ifTrue 或 ifFalse 子步骤' }
+  get category() { return 'flow-control' }
   get retryable() { return false }
 
   async execute(context, stepDef) {

@@ -5,6 +5,16 @@ class BaseStep {
     throw new Error('Step must implement get name()')
   }
 
+  // Step 自描述：用于 AI 编排与能力目录
+  get description() {
+    return '未声明 Step 功能描述'
+  }
+
+  // Step 分类：用于能力检索与流程编排
+  get category() {
+    return 'uncategorized'
+  }
+
   // 是否可以重试
   get retryable() {
     return true

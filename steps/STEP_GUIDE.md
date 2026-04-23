@@ -16,10 +16,13 @@
 7. [子 Step 的 Index 命名空间](#7-子-step-的-index-命名空间)
 8. [注册新 Step](#8-注册新-step)
 9. [现有 Step 速查表](#9-现有-step-速查表)
-10. [新增 Step 完整示例](#10-新增-step-完整示例)
-11. [Workflow 中使用新 Step](#11-workflow-中使用新-step)
-12. [Workflow 级 config 约定](#12-workflow-级-config-约定)
-13. [常见错误与排查](#13-常见错误与排查)
+10. [Step 能力目录（AI 编排指南）](#10-step-能力目录ai-编排指南)
+11. [Context 数据流示例](#11-context-数据流示例)
+12. [新增 Step 完整示例](#12-新增-step-完整示例)
+13. [Workflow 中使用新 Step](#13-workflow-中使用新-step)
+14. [Workflow 级 config 约定](#14-workflow-级-config-约定)
+15. [常见错误与排查](#15-常见错误与排查)
+16. [AI 编排提示语模板（可直接复制）](#16-ai-编排提示语模板可直接复制)
 
 ---
 
@@ -41,6 +44,12 @@ Step 是 WorkflowEngine 的最小执行单元。每个 Step：
 class BaseStep {
   // 【必须 override】Step 的唯一标识，与注册 key 一致
   get name() { throw new Error('must implement') }
+
+  // Step 功能描述（供 AI 编排与 getStepCatalog() 消费）
+  get description() { return '未声明' }
+
+  // Step 分类：content-creation / data-fetch / retrieval / integration / flow-control / output
+  get category() { return 'uncategorized' }
 
   // 默认 true；设为 false 则失败后不重试，直接进 DLQ
   get retryable() { return true }
@@ -234,21 +243,74 @@ Builder 函数的第二个参数 `deps` 包含：
 
 ## 9. 现有 Step 速查表
 
-| type | requires（类声明） | provides | retryable | timeout | 说明 |
-|---|---|---|---|---|---|
-| `topic` | `input` | `topic` | true | 20s | 从用户输入提炼主题（LLM） |
-| `rag-query` | `topic` | `ragResults` | true | 20s | 知识库向量检索（`stepDef.topK` > `_config.ragQuery.topK` > `5`） |
-| `skill-proxy` | —（由 stepDef.requires 配置） | — | true | 15s | 代理任意 OpenClaw Skill |
-| `hotspot` | — | `hotspot`, `hotspotSuggestions` | true | 30s | 热点话题提炼（LLM） |
-| `write` | `topic` | `article` | true | 60s | 生成文章（LLM） |
-| `polish` | `article` | `article`（覆盖） | true | 60s | 润色文章（LLM） |
-| `publish` | `article`, `channelId`, `_runId` | — | true | 10s | 写入消息 outbox |
-| `conditional` | — | — | **false** | 30s | 条件分支 |
-| `parallel` | — | — | **false** | 30s | 并行容器 |
-| `transform` | — | — | **false** | 30s | 纯函数数据变换 |
-| `noop` | — | — | **false** | 30s | 占位，不做任何事 |
+| type | category | requires（类声明） | provides | retryable | timeout | 说明 |
+|---|---|---|---|---|---|---|
+| `topic` | `content-creation` | `input` | `topic` | true | 20s | 从用户输入提炼写作主题（LLM） |
+| `rag-query` | `retrieval` | `topic` | `ragResults` | true | 20s | 知识库向量检索（`stepDef.topK` > `_config.ragQuery.topK` > `5`） |
+| `skill-proxy` | `integration` | —（由 stepDef.requires 配置） | — | true | 15s | 代理任意 OpenClaw Skill |
+| `hotspot` | `content-creation` | — | `hotspot`, `hotspotSuggestions` | true | 30s | 热点话题提炼（LLM） |
+| `write` | `content-creation` | `selectedTopic`, `research` | `article`, `articleData`, `articleJson` | true | 60s | 根据研究结果生成结构化文章（LLM） |
+| `polish` | `content-creation` | `article` | `article`（覆盖） | true | 60s | 润色文章（LLM） |
+| `publish` | `output` | `article`, `channelId`, `_runId` | — | true | 10s | 写入消息 outbox 并触发发送 |
+| `conditional` | `flow-control` | — | — | **false** | 30s | 条件分支 |
+| `parallel` | `flow-control` | — | — | **false** | 30s | 并行容器 |
+| `transform` | `flow-control` | — | — | **false** | 30s | 纯函数数据变换 |
+| `noop` | `flow-control` | — | — | **false** | 30s | 占位，不做任何事 |
+| `fetch-hotspots` | `data-fetch` | — | `hotspots` | true | 30s | 抓取微博/头条/百度热点（真实API） |
+| `generate-topics` | `content-creation` | `input`, `hotspots` | `topics`, `styleBrief`, `topicCandidates` | true | 40s | 生成多个候选话题（LLM） |
+| `select-topic` | `content-creation` | `topics`, `input` | `selectedTopic`, `topic` | true | 30s | 从候选话题中选择最合适的 |
+| `research` | `content-creation` | `selectedTopic` | `research` | true | 40s | 对话题进行研究分析（LLM） |
+| `image-generate` | `content-creation` | `selectedTopic` | `coverPrompt`, `inlineImages` | true | 60s | 根据话题生成图片提示词 |
+| `render-article` | `content-creation` | `articleData` | `finalMarkdown`, `finalHtml`, `images` | true | 30s | 将文章数据渲染为 HTML/Markdown |
 
-**Context 数据流（内置 workflow 示例）：**
+---
+
+## 10. Step 能力目录（AI 编排指南）
+
+> 每个 Step 的 `description` 和 `category` 由源文件的 getter 定义，单一真相。
+> 运行时可通过 `getStepCatalog()` 获取全量结构化数据，不需要解析本文档：
+>
+> ```js
+> const { getStepCatalog } = require('./steps')
+> const catalog = getStepCatalog() // 返回 { type, description, category, requires, provides, retryable, timeout }[]
+> ```
+
+### 分类说明
+
+| category | 含义 |
+|---|---|
+| `content-creation` | LLM 驱动的内容生产与加工 |
+| `data-fetch` | 外部数据抓取（API / 爬虫） |
+| `retrieval` | 知识库或索引检索 |
+| `integration` | 代理调用外部生态能力 |
+| `flow-control` | 流程结构控制（分支 / 并行 / 变换） |
+| `output` | 消息出站与发布 |
+
+### 各 Step 一句话功能
+
+| type | category | description |
+|---|---|---|
+| `fetch-hotspots` | data-fetch | 实时抓取微博/头条/百度热搜，失败自动降级为样本数据 |
+| `generate-topics` | content-creation | 基于热点和用户需求，用 LLM 生成多个候选话题（含标题、简介、角度、评分） |
+| `select-topic` | content-creation | 从候选话题中选择一个（支持用户显式选择、模型选择和评分回退） |
+| `topic` | content-creation | 从用户输入中提炼清晰写作主题，作为后续检索与写作的上游输入（LLM） |
+| `research` | content-creation | 围绕已选话题做写作前研究，输出角度、事实点、大纲、风险提示等（LLM） |
+| `write` | content-creation | 根据选题与研究结果生成完整结构化文章（标题、摘要、分节、配图提示词等） |
+| `image-generate` | content-creation | 根据选定话题自动匹配场景，生成封面图和文章内插图提示词 |
+| `render-article` | content-creation | 将结构化文章数据渲染为发布用 HTML 与 Markdown，并提取图片位信息 |
+| `hotspot` | content-creation | 从搜索结果或知识库中提炼热点话题与传播角度（LLM） |
+| `polish` | content-creation | 对已有文章进行润色：保持原意，提升可读性与段落结构（LLM） |
+| `rag-query` | retrieval | 对本地知识库进行向量检索，返回与 topic 相关的文档片段 |
+| `skill-proxy` | integration | 代理调用 OpenClaw Skill 生态能力，避免为每个外部能力单独实现 step |
+| `publish` | output | 将文章写入 outbox 发布队列并触发即时发送 |
+| `conditional` | flow-control | 条件分支：根据 context 动态选择执行 ifTrue 或 ifFalse 子步骤 |
+| `parallel` | flow-control | 并行执行多个子步骤，等待全部完成后汇总结果 |
+| `transform` | flow-control | 执行轻量数据转换函数 stepDef.run(context) |
+| `noop` | flow-control | 空操作占位，直接返回，不修改 context |
+
+---
+
+## 11. Context 数据流示例
 
 ```
 input
@@ -263,11 +325,11 @@ input
 
 ---
 
-## 10. 新增 Step 完整示例
+## 12. 新增 Step 完整示例
 
 以下以"摘要 Step"为例，说明完整的新增过程。
 
-### 10.1 创建 Step 文件：`steps/summarize.step.js`
+### 12.1 创建 Step 文件：`steps/summarize.step.js`
 
 ```js
 'use strict'
@@ -277,6 +339,8 @@ const modelRouter = require('../models/router')
 
 class SummarizeStep extends BaseStep {
   get name() { return 'summarize' }
+  get description() { return '将文章压缩为简洁摘要（LLM）' }
+  get category() { return 'content-creation' }
   get timeout() { return 30_000 }
   get requires() { return ['article'] }   // 执行前必须有 article
   get provides() { return ['summary'] }   // 执行后写入 summary
@@ -299,7 +363,7 @@ class SummarizeStep extends BaseStep {
 module.exports = SummarizeStep
 ```
 
-### 10.2 注册到 `steps/index.js`
+### 12.2 注册到 `steps/index.js`
 
 ```js
 const SummarizeStep = require('./summarize.step')
@@ -310,7 +374,7 @@ const STEP_REGISTRY = {
 }
 ```
 
-### 10.3 在 workflow 中使用
+### 12.3 在 workflow 中使用
 
 ```js
 {
@@ -321,7 +385,7 @@ const STEP_REGISTRY = {
 
 ---
 
-## 11. Workflow 中使用新 Step
+## 13. Workflow 中使用新 Step
 
 ### stepDef 完整字段说明
 
@@ -356,9 +420,9 @@ const STEP_REGISTRY = {
 
 ---
 
-## 12. Workflow 级 config 约定
+## 14. Workflow 级 config 约定
 
-### 12.1 机制说明
+### 14.1 机制说明
 
 Workflow 定义文件可在顶层添加 `config` 字段（纯 JSON 对象）。Engine 启动时将其注入 context，key 为 `_config`，所有 step 均可直接读取：
 
@@ -386,7 +450,7 @@ const topK = stepDef.topK || context.get('_config')?.ragQuery?.topK || 5
 
 `_config` 遵循 `_` 前缀约定：step 可读取，不应修改。
 
-### 12.2 双向约定规则
+### 14.2 双向约定规则
 
 使用 `_config` 字段需在**两处**同时声明，形成可追溯的契约：
 
@@ -417,15 +481,22 @@ class WriteStep extends BaseStep { ... }
 
 如果一个 step **不消费任何 `_config` 字段**，则不需要添加 `@workflow-config` 块。
 
-### 12.3 现有 config 字段速查表
+### 14.3 现有 config 字段速查表
 
 | `_config` 路径 | 类型 | 默认值 | 消费 Step | 说明 |
 |---|---|---|---|---|
 | `_config.ragQuery.topK` | `number` | `5` | `rag-query` | 向量检索返回数量 |
+| `_config.hotspots.enabledSources` | `array` | `['weibo','toutiao','baidu']` | `fetch-hotspots` | 启用的热点来源 |
+| `_config.hotspots.limitPerSource` | `number` | `10` | `fetch-hotspots` | 每个来源取多少条 |
+| `_config.hotspots.demo` | `boolean` | `false` | `fetch-hotspots` | 是否使用模拟数据 |
+| `_config.account.authorName` | `string` | — | `render-article` | 作者署名 |
+| `_config.account.authorWechat` | `string` | — | `render-article` | 作者微信号 |
+| `_config.account.authorAvatar` | `string` | — | `render-article` | 作者头像URL |
+| `_config.account.authorCardTemplate` | `string` | — | `render-article` | 作者卡片HTML模板 |
 
 ---
 
-## 13. 常见错误与排查
+## 15. 常见错误与排查
 
 ### 错误 1：`Unknown step type: "xxx"`
 
@@ -462,6 +533,329 @@ class WriteStep extends BaseStep { ... }
 
 **原因：** 重复调用 `registerStep()` 注册同一 type。
 **解决：** 只注册一次，或检查模块是否被多次加载。
+
+---
+
+## 16. AI 编排规则与 Step 完整清单
+
+> **本节设计目标**：AI 读完本文件后可直接生成可执行 workflow，用户无需额外提供 prompt 或 catalog。
+
+### 16.1 编排硬约束（AI 必须遵守）
+
+1. **优先使用 §16.2 catalog 中已存在的 `type`**。若当前 catalog 没有合适 step，必须先按本指南约束新增 step，并在同步 catalog 后再在 workflow 中引用新 type。
+2. **每个 step 的 `requires`，必须在”初始 context”或”前序步骤 provides / stepDef.output 写入的 key”中已满足**。
+   缺失会触发 `isInputError`，直接进 DLQ，不重试。
+3. **step 输出为数组或原始值时，必须在 stepDef 显式配置 `output: 'key'`**。
+   对象输出会自动 merge 到 context，不需要 output 字段（见 §5）。
+4. **flow-control 类（conditional / parallel / transform / noop）不得承担内容生产职责**，只做流程结构控制。
+5. **禁止伪造 step**：
+   - 可改代码时：实现新 step（含实现/注册/声明 requires-provides/retryable/timeout）并同步到 §16.2；
+   - 不可改代码时：返回”不可编排 + 缺失能力说明”。
+6. 参数优先级：`stepDef` 内联参数 > `workflow.config`（`_config`）> step 内硬编码默认值。
+7. **初始 context 保证可用的内置 key**（无需任何上游 step 即可使用）：
+
+   | key | 类型 | 说明 |
+   |---|---|---|
+   | `input` | string | 用户原始消息文本 |
+   | `channelId` | string | 目标频道/群 ID |
+   | `userId` | string | 发送者 ID |
+   | `conversationHistory` | array | 多轮对话历史（最近 10 条） |
+   | `_runId` | number | 当前 workflow run 的 DB ID |
+   | `_config` | object | workflow.config 注入的配置 |
+   | `event` | object | 完整事件对象 |
+   | `conversation` | object | 会话记录（来自 DB） |
+
+### 16.2 Step Catalog（当前全量，与代码同步）
+
+> 新增 step 后执行 `node scripts/update-step-guide.js` 更新此 JSON。
+> JSON 字段含义：`type` 注册名 / `description` 能力说明 / `category` 分类 / `requires` 前置 context key / `provides` 执行后写入的 key / `retryable` 是否重试 / `timeout` 默认超时(ms)。
+
+<!-- CATALOG_JSON_START -->
+```json
+[
+  {
+    "type": "parallel",
+    "description": "并行执行多个子步骤，等待全部完成后汇总结果；子步骤使用独立 context 快照防并发冲突",
+    "category": "flow-control",
+    "requires": [],
+    "provides": [],
+    "retryable": false,
+    "timeout": 30000
+  },
+  {
+    "type": "conditional",
+    "description": "条件分支：根据 context 动态选择执行 ifTrue 或 ifFalse 子步骤",
+    "category": "flow-control",
+    "requires": [],
+    "provides": [],
+    "retryable": false,
+    "timeout": 30000
+  },
+  {
+    "type": "transform",
+    "description": "执行轻量数据转换函数 stepDef.run(context)，用于拼装或改写上下文数据",
+    "category": "flow-control",
+    "requires": [],
+    "provides": [],
+    "retryable": false,
+    "timeout": 30000
+  },
+  {
+    "type": "noop",
+    "description": "空操作占位，直接返回，不修改 context；用于流程测试或临时跳过某步骤",
+    "category": "flow-control",
+    "requires": [],
+    "provides": [],
+    "retryable": false,
+    "timeout": 30000
+  },
+  {
+    "type": "skill-proxy",
+    "description": "代理调用 OpenClaw Skill 生态能力，避免为每个外部能力单独实现 step",
+    "category": "integration",
+    "requires": [],
+    "provides": [],
+    "retryable": true,
+    "timeout": 15000
+  },
+  {
+    "type": "rag-query",
+    "description": "对本地知识库进行向量检索，返回与 topic 相关的文档片段（向量召回 + BM25 重排）",
+    "category": "retrieval",
+    "requires": [
+      "topic"
+    ],
+    "provides": [
+      "ragResults"
+    ],
+    "retryable": true,
+    "timeout": 20000
+  },
+  {
+    "type": "topic",
+    "description": "从用户输入中提炼清晰写作主题，作为后续检索与写作的上游输入（LLM）",
+    "category": "content-creation",
+    "requires": [
+      "input"
+    ],
+    "provides": [
+      "topic"
+    ],
+    "retryable": true,
+    "timeout": 20000
+  },
+  {
+    "type": "hotspot",
+    "description": "从搜索结果或知识库中提炼热点话题与传播角度（LLM），已有实时热点时请用 fetch-hotspots 代替",
+    "category": "content-creation",
+    "requires": [],
+    "provides": [
+      "hotspot",
+      "hotspotSuggestions"
+    ],
+    "retryable": true,
+    "timeout": 30000
+  },
+  {
+    "type": "write",
+    "description": "根据选题与研究结果生成完整结构化文章（标题、摘要、分节、配图提示词等）",
+    "category": "content-creation",
+    "requires": [
+      "selectedTopic",
+      "research"
+    ],
+    "provides": [
+      "article",
+      "articleData",
+      "articleJson"
+    ],
+    "retryable": true,
+    "timeout": 60000
+  },
+  {
+    "type": "polish",
+    "description": "对已有文章进行润色：保持原意，提升可读性与段落结构（LLM）",
+    "category": "content-creation",
+    "requires": [
+      "article"
+    ],
+    "provides": [
+      "article"
+    ],
+    "retryable": true,
+    "timeout": 60000
+  },
+  {
+    "type": "publish",
+    "description": "将文章写入 outbox 发布队列并触发即时发送，实际出站由 outbox worker 异步处理",
+    "category": "output",
+    "requires": [
+      "article",
+      "channelId",
+      "_runId"
+    ],
+    "provides": [],
+    "retryable": true,
+    "timeout": 10000
+  },
+  {
+    "type": "generate-topics",
+    "description": "基于热点和用户需求，用 LLM 生成多个候选话题（含标题、简介、角度、评分）",
+    "category": "content-creation",
+    "requires": [
+      "input",
+      "hotspots"
+    ],
+    "provides": [
+      "topics",
+      "styleBrief",
+      "topicCandidates"
+    ],
+    "retryable": true,
+    "timeout": 40000
+  },
+  {
+    "type": "select-topic",
+    "description": "从候选话题中选择一个最合适的话题（支持用户显式选择、模型选择和评分回退）",
+    "category": "content-creation",
+    "requires": [
+      "topics",
+      "input"
+    ],
+    "provides": [
+      "selectedTopic",
+      "topic"
+    ],
+    "retryable": true,
+    "timeout": 30000
+  },
+  {
+    "type": "research",
+    "description": "围绕已选话题做写作前研究，输出角度、事实点、大纲、风险提示等结构化结果（LLM）",
+    "category": "content-creation",
+    "requires": [
+      "selectedTopic"
+    ],
+    "provides": [
+      "research"
+    ],
+    "retryable": true,
+    "timeout": 40000
+  },
+  {
+    "type": "image-generate",
+    "description": "根据选定话题自动匹配场景，生成封面图提示词和文章内插图提示词（无需调用图片 API）",
+    "category": "content-creation",
+    "requires": [
+      "selectedTopic"
+    ],
+    "provides": [
+      "coverPrompt",
+      "inlineImages"
+    ],
+    "retryable": true,
+    "timeout": 60000
+  },
+  {
+    "type": "fetch-hotspots",
+    "description": "实时抓取微博/头条/百度热搜，输出标准化热点列表（真实 API，失败自动降级为样本数据）",
+    "category": "data-fetch",
+    "requires": [],
+    "provides": [
+      "hotspots"
+    ],
+    "retryable": true,
+    "timeout": 30000
+  },
+  {
+    "type": "render-article",
+    "description": "将结构化文章数据渲染为发布用 HTML 与 Markdown，并提取图片位信息",
+    "category": "content-creation",
+    "requires": [
+      "articleData"
+    ],
+    "provides": [
+      "finalMarkdown",
+      "finalHtml",
+      "images"
+    ],
+    "retryable": true,
+    "timeout": 30000
+  }
+]
+```
+<!-- CATALOG_JSON_END -->
+
+### 16.3 新增 Step 实施规范（当 catalog 无可用能力时）
+
+当需求无法由现有 catalog 覆盖时，AI 必须先补齐能力，再做流程编排。最小动作清单如下：
+
+1. 在 `steps/` 新增 `<type>.step.js`，实现 `execute(context)`，并在文件内声明清晰的 `requires/provides/retryable/timeout`。
+2. 在 `steps/index.js` 的 `STEP_REGISTRY` 注册新 `type`，确保运行时可识别。
+3. 若 step 输出为数组或原始值，要求 workflow 侧强制配置 `output` key；若输出对象，遵循 merge 语义。
+4. 为新 step 增加最小可用验证（至少包含 requires 满足与核心输出结构校验）。
+5. 执行 `node scripts/update-step-guide.js`，把新 step 同步到 §16.2 catalog。
+6. 完成同步后再生成 workflow，并在 `dependencyCheck` 中引用该新 step 的 provides 来源。
+
+> 禁止“先引用不存在 type，后补实现”的倒序编排。
+
+### 16.4 生成 workflow 的输出格式
+
+AI 根据用户需求生成 workflow 时，必须返回以下三段：
+
+**① steps**（可直接放入 workflow 定义的 JSON 数组）
+
+```json
+[
+  { “type”: “fetch-hotspots” },
+  { “type”: “generate-topics” },
+  { “type”: “select-topic” },
+  { “type”: “research” },
+  { “type”: “write” },
+  { “type”: “publish” }
+]
+```
+
+**② dependencyCheck**（逐步说明每步的 requires 来源，不满足时标注”不可编排”）
+
+```
+fetch-hotspots requires: []            -> 无前置依赖，直接可用
+generate-topics requires: [input, hotspots]
+  - input      -> 来自初始 context（内置）
+  - hotspots   -> 来自 fetch-hotspots.provides
+select-topic requires: [topics, input]
+  - topics     -> 来自 generate-topics.provides
+  - input      -> 来自初始 context（内置）
+research requires: [selectedTopic]
+  - selectedTopic -> 来自 select-topic.provides
+write requires: [selectedTopic, research]
+  - selectedTopic -> 来自 select-topic.provides
+  - research      -> 来自 research.provides
+publish requires: [article, channelId, _runId]
+  - article    -> 来自 write.provides
+  - channelId  -> 来自初始 context（内置）
+  - _runId     -> 来自初始 context（内置）
+```
+
+**③ risks**（仅列出与当前流程直接相关的风险）
+
+```
+- fetch-hotspots 失败会降级为样本数据，不会中断流程
+- write 的 requires 未满足时报 inputError 直接 DLQ，不重试
+- publish 依赖 channelId，若事件来源没有 channelId 则流程失败
+```
+
+### 16.5 最小检查清单
+
+生成或人工编写 workflow 后，必须逐条确认：
+
+- [ ] 所有 `type` 均存在于 §16.2 catalog（新增 step 须先按 §16.3 完成实现与同步再引用）。
+- [ ] 每一步 `requires` 都有明确上游来源（初始 context 或前序 provides）。
+- [ ] 数组 / 原始值输出已配置 `stepDef.output`（对象输出则不需要）。
+- [ ] flow-control step 不承担内容生产。
+- [ ] 流程终点产出满足目标（如 `article` / `finalMarkdown` / publish 动作）。
+- [ ] 涉及 `_config` 的读取已在 workflow 端注释消费方，在 step 端声明 `@workflow-config`。
+- [ ] 若本次引入了新 step：`steps/index.js` 已注册，`update-step-guide.js` 已执行，catalog 已更新。
 
 ---
 

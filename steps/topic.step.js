@@ -3,8 +3,24 @@
 const BaseStep = require('./base.step')
 const modelRouter = require('../models/router')
 
+/**
+ * topic step — 从用户需求中提炼明确的写作主题
+ * 
+ * 主要功能：
+ * - 分析用户输入，提炼一个清晰、适合写作的主题
+ * - 参考多轮对话历史，保持上下文连贯性
+ * - 适合作为后续 RAG 检索和写作的基础
+ * 
+ * @workflow-config
+ * - 无需配置
+ * 
+ * @requires ['input'] - 用户原始需求输入
+ * @provides ['topic'] - 提炼后的主题
+ */
 class TopicStep extends BaseStep {
   get name() { return 'topic' }
+  get description() { return '从用户输入中提炼清晰写作主题，作为后续检索与写作的上游输入（LLM）' }
+  get category() { return 'content-creation' }
   get timeout() { return 20_000 }
   get requires() { return ['input'] }
   get provides() { return ['topic'] }
