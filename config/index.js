@@ -13,6 +13,7 @@ module.exports = {
   BAILIAN_BASE_URL: process.env.BAILIAN_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   BAILIAN_CHAT_MODEL: process.env.BAILIAN_CHAT_MODEL || 'qwen-plus',
   BAILIAN_EMBED_MODEL: process.env.BAILIAN_EMBED_MODEL || 'text-embedding-v4',
+  EMBEDDING_DIMENSION: Number(process.env.EMBEDDING_DIMENSION || 1024),
 
   OPENCLAW_BASE_URL: process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789',
   OPENCLAW_GATEWAY_TOKEN: process.env.OPENCLAW_GATEWAY_TOKEN || '',

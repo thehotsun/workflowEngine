@@ -70,6 +70,47 @@ function insertVectors(vectors = []) {
   tx(vectors)
 }
 
+function getDocIndexStats(docId) {
+  const db = getDb()
+  const chunkRow = db.prepare(`
+    SELECT COUNT(1) AS total
+    FROM knowledge_chunks
+    WHERE doc_id = ?
+  `).get(docId)
+
+  const vectorRow = db.prepare(`
+    SELECT COUNT(1) AS total
+    FROM knowledge_vectors kv
+    JOIN knowledge_chunks kc ON kc.id = kv.chunk_id
+    WHERE kc.doc_id = ?
+  `).get(docId)
+
+  return {
+    chunkCount: chunkRow?.total || 0,
+    vectorCount: vectorRow?.total || 0
+  }
+}
+
+function getVectorDimension() {
+  const row = getDb().prepare(`
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'knowledge_vectors'
+  `).get()
+  const match = row?.sql?.match(/embedding\s+float\[(\d+)\]/i)
+  return match ? Number(match[1]) : null
+}
+
+function cleanupOrphanVectors() {
+  const result = getDb().prepare(`
+    DELETE FROM knowledge_vectors
+    WHERE chunk_id NOT IN (
+      SELECT id FROM knowledge_chunks
+    )
+  `).run()
+  return result.changes || 0
+}
+
 function markDeleted(filePath) {
   getDb().prepare(`UPDATE knowledge_docs SET status = 'deleted', updated_at = ? WHERE file_path = ?`).run(Date.now(), filePath)
 }
@@ -81,5 +122,8 @@ module.exports = {
   deleteDocChunks,
   insertChunks,
   insertVectors,
+  getDocIndexStats,
+  getVectorDimension,
+  cleanupOrphanVectors,
   markDeleted
 }

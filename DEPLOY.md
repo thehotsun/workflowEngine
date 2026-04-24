@@ -92,12 +92,14 @@ cp .env.example .env
 | `BAILIAN_BASE_URL` | 固定值 `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `BAILIAN_CHAT_MODEL` | 对话模型名，默认 `qwen-plus` |
 | `BAILIAN_EMBED_MODEL` | 向量化模型名，默认 `text-embedding-v4`，需在百炼控制台开通 |
+| `EMBEDDING_DIMENSION` | 向量维度，必须与 `persist/schema.sql` 中 `knowledge_vectors.embedding float[...]` 一致，默认 `1024` |
 
 ```env
 BAILIAN_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
 BAILIAN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 BAILIAN_CHAT_MODEL=qwen-plus
 BAILIAN_EMBED_MODEL=text-embedding-v4
+EMBEDDING_DIMENSION=1024
 ```
 
 ---
@@ -392,7 +394,70 @@ node rag/ingest.js
 
 ---
 
-## 3.5 执行 `node rag/ingest.js` 没有过程日志
+## 3.5 向量化时报维度不匹配：`knowledge_vectors dimension mismatch` / `embedding dimension mismatch`
+
+**现象**
+
+```text
+knowledge_vectors dimension mismatch: database float[1024], config EMBEDDING_DIMENSION=1536
+embedding dimension mismatch at chunk 0: got 1536, expected 1024
+```
+
+**原因**
+
+Embedding API 已成功返回向量，但返回维度与 sqlite-vec 表定义不一致。`EMBEDDING_DIMENSION`、实际 embedding 模型返回维度、`persist/schema.sql` 中的 `embedding float[...]` 必须一致。
+
+**处理**
+
+1) 确认当前 embedding 模型实际返回维度。
+
+2) 同步修改 `.env`：
+
+```env
+EMBEDDING_DIMENSION=1024
+```
+
+3) 同步确认 `persist/schema.sql`：
+
+```sql
+embedding float[1024]
+```
+
+如果需要换成其他维度，需要删除并重建 `knowledge_vectors` 表，然后重新执行向量化导入。
+
+---
+
+## 3.6 向量化时报 400：`Range of input length should be [1, 8192]`
+
+**现象**
+
+```text
+400 Range of input length should be [1, 8192]
+```
+
+**原因**
+
+某个 Markdown 分块超过 embedding API 的输入 token 上限。
+
+**处理**
+
+- 确认项目中的 `rag/chunker.js` 使用了硬上限切分，默认 `hardMaxTokens=6500`
+- 重新执行向量化导入：
+
+```bash
+node rag/ingest.js
+```
+
+- 如果某个历史文档已经部分入库但索引不完整，可以直接删除该文档对应的 chunks/vectors 后重新导入；更简单的做法是删除数据库后全量重建：
+
+```bash
+rm -f data/engine.db data/engine.db-wal data/engine.db-shm
+node rag/ingest.js
+```
+
+---
+
+## 3.7 执行 `node rag/ingest.js` 没有过程日志
 
 当前脚本默认只有结束时才输出成功/失败信息，处理中间是静默。
 
@@ -411,7 +476,7 @@ watch -n 3 'sqlite3 data/engine.db "SELECT COUNT(*) FROM knowledge_vectors;"'
 
 ---
 
-## 3.6 `sqlite3: not found`
+## 3.8 `sqlite3: not found`
 
 **处理**
 
@@ -421,7 +486,7 @@ sudo apt-get update && sudo apt-get install -y sqlite3
 
 ---
 
-## 3.7 向量化后检索不到内容
+## 3.9 向量化后检索不到内容
 
 按顺序检查：
 

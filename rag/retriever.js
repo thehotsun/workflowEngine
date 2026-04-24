@@ -48,8 +48,8 @@ async function retrieve({ query, topK = 5 }) {
     const N = getActiveChunkCount()
     const dfMap = getDocumentFrequencyByTerms(keywords)
 
-    // 估算平均文档长度（从候选 chunks 样本，避免全表扫描）
-    const avgLen = chunks.reduce((sum, c) => sum + (c.content?.length || 0), 0) / (chunks.length || 1)
+    // BM25 的平均文档长度按分词后的词项数量计算
+    const avgLen = chunks.reduce((sum, c) => sum + tokenize(c.content || '').length, 0) / (chunks.length || 1)
 
     const reranked = chunks.map(chunk => {
       const vecScore = scoreMap[chunk.id] || 0
@@ -88,8 +88,9 @@ function tokenize(text) {
  * @returns {number}
  */
 function bm25Score(text, keywords, { k1 = 1.5, b = 0.75, avgLen = 500, N = 1, dfMap = {} } = {}) {
-  const docLen = text.length
   const terms = tokenize(text)
+  const docLen = terms.length || 1
+  const safeAvgLen = avgLen || 1
   const tf = {}
   for (const t of terms) tf[t] = (tf[t] || 0) + 1
 
@@ -102,7 +103,7 @@ function bm25Score(text, keywords, { k1 = 1.5, b = 0.75, avgLen = 500, N = 1, df
     // 标准 Okapi BM25 IDF，确保非负
     const idf = Math.log((N - df + 0.5) / (df + 0.5) + 1)
     const numerator = freq * (k1 + 1)
-    const denominator = freq + k1 * (1 - b + b * docLen / avgLen)
+    const denominator = freq + k1 * (1 - b + b * docLen / safeAvgLen)
     score += idf * (numerator / denominator)
   }
   return score

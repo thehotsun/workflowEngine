@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const { v4: uuidv4 } = require('uuid')
-const { KNOWLEDGE_DIR } = require('../config')
+const { KNOWLEDGE_DIR, EMBEDDING_DIMENSION } = require('../config')
 const { chunkMarkdown } = require('./chunker')
 const embedder = require('./embedder')
 const {
@@ -14,10 +14,19 @@ const {
   deleteDocChunks,
   insertChunks,
   insertVectors,
+  getDocIndexStats,
+  getVectorDimension,
+  cleanupOrphanVectors,
   markDeleted
 } = require('../persist/repos/knowledge.repo')
 
+const VECTOR_DIMENSION = EMBEDDING_DIMENSION
+
 async function ingestKnowledge(dir = KNOWLEDGE_DIR) {
+  assertVectorDimension()
+  const orphanCount = cleanupOrphanVectors()
+  if (orphanCount) console.warn(`[ingest] cleaned ${orphanCount} orphan vectors`)
+
   const files = walkMarkdownFiles(dir)
   const seen = new Set()
 
@@ -28,7 +37,11 @@ async function ingestKnowledge(dir = KNOWLEDGE_DIR) {
     const existing = getDocByPath(filePath)
 
     if (existing && existing.file_hash === hash) {
-      continue // 无变化，跳过
+      const stats = getDocIndexStats(existing.id)
+      if (stats.chunkCount === existing.chunk_count && stats.vectorCount === existing.chunk_count) {
+        continue // 无变化且索引完整，跳过
+      }
+      console.warn(`[ingest] ${path.basename(filePath)} index incomplete, rebuilding (${stats.chunkCount} chunks, ${stats.vectorCount} vectors, expected ${existing.chunk_count})`)
     }
 
     const title = extractTitle(raw) || path.basename(filePath, '.md')
@@ -48,11 +61,26 @@ async function ingestKnowledge(dir = KNOWLEDGE_DIR) {
 
     insertChunks(doc.id, chunkRows)
 
-    const vectors = await embedder.embeddings(chunkRows.map(c => c.content))
-    insertVectors(chunkRows.map((chunk, i) => ({
-      chunkId: chunk.id,
-      embedding: vectors[i]
-    })))
+    try {
+      const vectors = await embedder.embeddings(chunkRows.map(c => c.content))
+      if (vectors.length !== chunkRows.length) {
+        throw new Error(`embedding count mismatch: got ${vectors.length}, expected ${chunkRows.length}`)
+      }
+      for (const [i, vector] of vectors.entries()) {
+        if (!Array.isArray(vector) || vector.length !== VECTOR_DIMENSION) {
+          throw new Error(`embedding dimension mismatch at chunk ${i}: got ${Array.isArray(vector) ? vector.length : 'invalid'}, expected ${VECTOR_DIMENSION}`)
+        }
+      }
+      insertVectors(chunkRows.map((chunk, i) => ({
+        chunkId: chunk.id,
+        embedding: vectors[i]
+      })))
+    } catch (err) {
+      deleteDocChunks(doc.id)
+      console.error(`[ingest] ${path.basename(filePath)} index failed, cleaned partial chunks/vectors:`, err.message)
+      throw err
+    }
+
     console.log(`[ingest] ${path.basename(filePath)} done (${chunkRows.length} chunks)`)
   }
 
@@ -63,6 +91,13 @@ async function ingestKnowledge(dir = KNOWLEDGE_DIR) {
       deleteDocChunks(doc.id)
       markDeleted(doc.file_path)
     }
+  }
+}
+
+function assertVectorDimension() {
+  const dbDimension = getVectorDimension()
+  if (dbDimension && dbDimension !== VECTOR_DIMENSION) {
+    throw new Error(`knowledge_vectors dimension mismatch: database float[${dbDimension}], config EMBEDDING_DIMENSION=${VECTOR_DIMENSION}. Recreate knowledge_vectors or fix EMBEDDING_DIMENSION.`)
   }
 }
 

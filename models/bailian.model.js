@@ -149,16 +149,33 @@ class BailianModel extends BaseModel {
         }
       } catch (err) {
         const durationMs = Date.now() - batchStartedAt
-        logger.error({ batchIndex, batchSize: batch.length, durationMs, err: err.message }, 'Embeddings batch failed')
-        const wrapped = new Error(`BailianModel.embeddings batch failed: ${err.message}`)
-        wrapped.cause = err
-        wrapped.isModelError = true
-        throw wrapped
+        logger.error({ batchIndex, batchSize: batch.length, durationMs, err: err.message }, 'Embeddings batch failed, retrying one by one')
+        const fallback = await this.embeddingBatchOneByOne(batch, i)
+        results.push(...fallback)
       } finally {
         embedSemaphore.release()
       }
     }
 
+    return results
+  }
+  async embeddingBatchOneByOne(texts = [], offset = 0) {
+    const results = []
+    for (let i = 0; i < texts.length; i++) {
+      const text = texts[i]
+      try {
+        const response = await this.client.embeddings.create({
+          model: BAILIAN_EMBED_MODEL,
+          input: text
+        })
+        results.push(response.data?.[0]?.embedding || [])
+      } catch (err) {
+        const wrapped = new Error(`BailianModel.embeddings failed at chunk ${offset + i} (chars=${text?.length || 0}): ${err.message}`)
+        wrapped.cause = err
+        wrapped.isModelError = true
+        throw wrapped
+      }
+    }
     return results
   }
 }
