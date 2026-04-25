@@ -47,9 +47,12 @@ module.exports = {
       ifTrue: {
         type: 'skill-proxy',
         skill: 'web-search',
-        input: ctx => ({ query: ctx.get('topic') }),
+        input: ctx => ({ 
+          query: ctx.get('topic'),
+          count: 5  // 返回 5 条搜索结果
+        }),
         output: 'searchResults',
-        timeout: 15_000
+        timeout: 20_000
       },
       ifFalse: { type: 'noop' }
     },

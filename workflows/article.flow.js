@@ -166,9 +166,12 @@ module.exports = {
       ifTrue: {
         type: 'skill-proxy',
         skill: 'web-search',
-        input: ctx => ({ query: ctx.get('topics')?.[0]?.title || ctx.get('input') }),
+        input: ctx => ({ 
+          query: ctx.get('topics')?.[0]?.title || ctx.get('input'),
+          count: 5
+        }),
         output: 'searchResults',
-        timeout: 15000
+        timeout: 20000
       },
       ifFalse: { type: 'noop' }
     },

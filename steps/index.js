@@ -18,6 +18,7 @@ const ResearchStep = require('./research.step')
 const ImageGenerateStep = require('./image-generate.step')
 const FetchHotspotsStep = require('./fetch-hotspots.step')
 const RenderArticleStep = require('./render-article.step')
+const WebSearchStep = require('./web-search.step')
 
 const STEP_REGISTRY = {
   'parallel':        (def, deps) => new ParallelStep({ steps: def.steps, ...deps }),
@@ -37,6 +38,7 @@ const STEP_REGISTRY = {
   'image-generate':  (def, deps) => new ImageGenerateStep(),
   'fetch-hotspots':  (def, deps) => new FetchHotspotsStep(),
   'render-article':  (def, deps) => new RenderArticleStep(),
+  'web-search':      (def, deps) => new WebSearchStep(),
 }
 
 function buildStep(stepDef, deps = {}) {
