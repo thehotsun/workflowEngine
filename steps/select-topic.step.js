@@ -2,67 +2,102 @@
 
 const BaseStep = require('./base.step')
 const modelRouter = require('../models/router')
+const { enqueueMessage } = require('../persist/repos/outbox.repo')
+const { outboxEmitter } = require('../trigger/outbox-worker')
+const logger = require('../utils/logger')
 
 /**
  * select-topic step — 从候选话题中选择最合适的一个
- * 
- * 支持多种选择方式：
- * 1. 自动识别用户输入中的话题ID（如"选T01"、"我要第二个"）
- * 2. 通过模型根据用户需求智能选择最佳话题
- * 3. 按分数排序选择最高分的话题（fallback）
- * 
+ *
+ * 流程：
+ * 1. 生成候选话题列表
+ * 2. 发送话题列表到用户 QQ，等待用户选择
+ * 3. 返回 { _wait: true } 暂停 workflow
+ * 4. 用户回复后，workflow 引擎自动恢复，从 context.userReply 中读取用户选择
+ *
  * @workflow-config
  * - 无需配置，自动从context读取
- * 
+ *
  * @requires ['topics', 'input'] - 候选话题列表和用户原始输入
  * @provides ['selectedTopic', 'topic'] - 选中的完整话题对象和话题标题
  */
 class SelectTopicStep extends BaseStep {
   get name() { return 'select-topic' }
-  get description() { return '从候选话题中选择一个最合适的话题（支持用户显式选择、模型选择和评分回退）' }
+  get description() { return '发送候选话题给用户，等待用户选择后继续' }
   get category() { return 'content-creation' }
-  get timeout() { return 30000 }
+  get timeout() { return 300000 } // 5 分钟超时（等待用户回复）
   get requires() { return ['topics', 'input'] }
   get provides() { return ['selectedTopic', 'topic'] }
 
   async execute(context, stepDef) {
     const topics = context.get('topics', [])
     const input = context.get('input', '')
+    const userReply = context.get('userReply', '')
 
     if (!topics || !Array.isArray(topics) || topics.length === 0) {
       throw new Error('select-topic: no topics available in context')
     }
 
-    // 首先检查用户是否在 input 中直接选择了某个 topic（例如：选 T01 或我要写第二个）
-    let selectedTopic = this._tryAutoSelect(topics, input)
-
-    if (!selectedTopic) {
-      // 如果没有直接选择，让模型根据用户输入选择最合适的话题
-      selectedTopic = await this._selectWithModel(topics, input)
+    // 如果是恢复执行（用户已回复），直接解析选择
+    if (userReply) {
+      const selectedTopic = this._parseSelection(topics, userReply)
+      logger.info({ userReply, selectedTopic: selectedTopic.title }, '✅ 用户已选择话题')
+      return {
+        ok: true,
+        output: {
+          selectedTopic,
+          topic: selectedTopic.title
+        }
+      }
     }
 
-    // 将 selectedTopic 同时设置为 topic，供后续 step 使用
+    // 首次执行：发送话题列表给用户，等待选择
+    const channelId = context.get('channelId')
+    if (!channelId) {
+      throw new Error('select-topic: channelId is required to send topic list')
+    }
+
+    const message = this._buildTopicMessage(topics, input)
+    const runId = context.get('_runId')
+
+    // 发送话题列表到用户
+    const msgId = enqueueMessage({ runId, channelId, content: message })
+    outboxEmitter.emit('new_message', { msgId, runId })
+
+    logger.info({ channelId, topicCount: topics.length }, '📤 已发送候选话题，等待用户选择')
+
+    // 返回 _wait 标记，通知引擎暂停
     return {
       ok: true,
-      output: {
-        selectedTopic,
-        topic: selectedTopic.title
-      }
+      _wait: true,
+      output: null
     }
   }
 
-  _tryAutoSelect(topics, input) {
-    const inputLower = input.toLowerCase()
+  /**
+   * 解析用户选择
+   */
+  _parseSelection(topics, userReply) {
+    const reply = userReply.trim()
 
-    // 检查是否有直接引用 ID 的（如 T01, T02 等）
+    // 检查是否有直接引用 ID（如 T01, T02）
     for (const topic of topics) {
-      if (topic.id && inputLower.includes(topic.id.toLowerCase())) {
+      if (topic.id && reply.toLowerCase().includes(topic.id.toLowerCase())) {
         return topic
       }
     }
 
-    // 检查是否有"第一个"、"第二个"等序数词
-    const ordinalMatch = input.match(/第[一二三四五六]个/)
+    // 检查数字选择（如 "1", "2", "3"）
+    const numMatch = reply.match(/^(\d+)$/)
+    if (numMatch) {
+      const index = parseInt(numMatch[1]) - 1
+      if (index >= 0 && index < topics.length) {
+        return topics[index]
+      }
+    }
+
+    // 检查序数词（如 "第一个", "第二个"）
+    const ordinalMatch = reply.match(/第[一二三四五六]个/)
     if (ordinalMatch) {
       const ordinalMap = { '第一': 0, '第二': 1, '第三': 2, '第四': 3, '第五': 4, '第六': 5 }
       const index = ordinalMap[ordinalMatch[0].slice(0, 2)]
@@ -71,40 +106,33 @@ class SelectTopicStep extends BaseStep {
       }
     }
 
-    // 检查是否选择分数最高的
-    const sortedByScore = [...topics].sort((a, b) => (b.score || 0) - (a.score || 0))
-    if (sortedByScore.length > 0) {
-      return sortedByScore[0]
-    }
-
-    return null
+    // 尝试用模型解析
+    // fallback: 默认选第一个
+    logger.warn({ userReply }, '⚠️ 无法解析用户选择，默认选第一个')
+    return topics[0]
   }
 
-  async _selectWithModel(topics, input) {
-    const topicsText = topics
-      .map((t, i) => `${t.id || `T${i + 1}`}. ${t.title}\n   ${t.intro}`)
-      .join('\n\n')
+  /**
+   * 构建话题选择消息
+   */
+  _buildTopicMessage(topics, userInput) {
+    let msg = '📝 为你生成了以下候选话题，请选择：\n\n'
 
-    const systemPrompt = `你是一位资深公众号编辑。请根据用户的需求，从以下候选话题中选择最合适的一个。
-只输出选中话题的 ID（如 T01），不要输出其他内容。`
+    topics.forEach((topic, i) => {
+      const id = topic.id || `T${i + 1}`
+      const title = topic.title || '未命名话题'
+      const intro = topic.intro || ''
+      msg += `${id}. ${title}\n`
+      if (intro) {
+        msg += `   ${intro}\n`
+      }
+      msg += '\n'
+    })
 
-    const userPrompt = `用户需求：${input}\n\n候选话题：\n${topicsText}\n\n请选择最合适的话题 ID：`
+    msg += '────────────\n'
+    msg += '请回复话题编号（如 T01 或 1）或直接输入标题关键词：'
 
-    const model = modelRouter.route('analysis')
-    const { content } = await model.chat([
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ])
-
-    // 尝试从模型输出中提取 topic ID
-    const match = content.trim().match(/T\d+/)
-    if (match) {
-      const found = topics.find(t => t.id === match[0])
-      if (found) return found
-    }
-
-    // 如果找不到匹配的 ID，返回第一个话题作为 fallback
-    return topics[0]
+    return msg
   }
 }
 

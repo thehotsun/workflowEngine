@@ -22,6 +22,13 @@ async function eventsRoutes(fastify, opts) {
 
     logger.info({ channelId: event.channelId, userId: event.userId, text: event.text?.slice(0, 50) }, '📥 收到消息')
 
+    // 检查是否有等待用户输入的 workflow run
+    const resumedRunId = await engine.resumeRun(event.channelId, event.text)
+    if (resumedRunId) {
+      logger.info({ channelId: event.channelId, runId: resumedRunId }, '▶️ Workflow resumed from wait')
+      return reply.code(200).send({ ok: true, eventId: null, resumedRunId })
+    }
+
     // 拦截器检查：复用 workflow trigger.match，不匹配任何流程则返回 eventId: null，
     // my-qq-filter 收到 null 不会阻止 openclaw 默认回复
     const interceptResult = engine.shouldProcessMessage(event)

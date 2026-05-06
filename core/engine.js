@@ -4,7 +4,7 @@ const WorkflowContext = require('./context')
 const { dispatchSteps } = require('./dispatcher')
 const { assertTransition } = require('./state-machine')
 const { withRetry } = require('./retry')
-const { createRun, updateRunStatus, getRecoverableRuns, getRunById } = require('../persist/repos/workflow.repo')
+const { createRun, updateRunStatus, getRecoverableRuns, getRunById, getWaitingRunByChannel } = require('../persist/repos/workflow.repo')
 const { createStepRun, updateStepRun, getCompletedStepRuns } = require('../persist/repos/step.repo')
 const { markProcessing, markDone, markFailed } = require('../persist/repos/event.repo')
 const { updateConversation, getOrCreateConversation } = require('../persist/repos/conversation.repo')
@@ -111,7 +111,15 @@ class WorkflowEngine {
       })
 
       const currentRun = getRunById(runId)
-      assertTransition(currentRun ? currentRun.status : 'running', 'done')
+      const currentStatus = currentRun ? currentRun.status : 'running'
+
+      // 如果是等待用户输入状态，不转换到 done
+      if (currentStatus === 'waiting') {
+        if (eventId) markDone(eventId)
+        return
+      }
+
+      assertTransition(currentStatus, 'done')
       updateRunStatus(runId, 'done', {
         finishedAt: Date.now(),
         context: context.toJSON()
@@ -174,6 +182,22 @@ class WorkflowEngine {
         runId,
         maxRetries: step.retryable === false ? 0 : (stepDef.maxRetries ?? 2)
       })
+
+      // 检查是否需要等待用户输入
+      if (result && result._wait) {
+        updateStepRun(stepRunId, {
+          status: 'done',
+          output: result.output,
+          durationMs: Date.now() - started,
+          finishedAt: Date.now()
+        })
+        // 标记 run 为 waiting，保存当前 step index
+        updateRunStatus(runId, 'waiting', {
+          context: { ...context.toJSON(), _waitStepIndex: stepIndex, _waitStepName: stepName }
+        })
+        logger.info({ runId, stepName, stepIndex }, '⏸️ Workflow paused, waiting for user input')
+        return result
+      }
 
       if (stepDef.output) {
         context.set(stepDef.output, result?.output)
@@ -291,6 +315,93 @@ class WorkflowEngine {
     const content = `⚠️ 工作流执行失败\n流程：${workflow.name || workflow.id}\nrunId：${runId}${stepInfo}\n原因：${err.message}`
     const msgId = enqueueMessage({ runId, channelId, content })
     outboxEmitter.emit('new_message', { msgId, runId })
+  }
+
+  /**
+   * 恢复等待中的 workflow run
+   * @param {string} channelId - 频道 ID
+   * @param {string} userInput - 用户输入的文本
+   * @returns {string|null} - runId 或 null
+   */
+  async resumeRun(channelId, userInput) {
+    const waitingRun = getWaitingRunByChannel(channelId)
+    if (!waitingRun) return null
+
+    const workflow = this.workflows.find(flow => flow.id === waitingRun.workflow_id)
+    if (!workflow) {
+      logger.error({ runId: waitingRun.id, workflowId: waitingRun.workflow_id }, 'Cannot resume: workflow not found')
+      updateRunStatus(waitingRun.id, 'failed', { error: 'Workflow not found for resume' })
+      return null
+    }
+
+    const contextData = waitingRun.context_json ? JSON.parse(waitingRun.context_json) : {}
+    const workflowConfig = normalizeWorkflowConfig(workflow?.config)
+    const context = new WorkflowContext({ ...contextData, _runId: waitingRun.id, _config: workflowConfig })
+
+    // 注入用户回复
+    context.set('userReply', userInput)
+    context.set('input', userInput)
+
+    // 从等待的下一步继续
+    const waitStepIndex = contextData._waitStepIndex ?? 0
+    const nextIndex = waitStepIndex + 1
+
+    // 加载 conversation
+    const conversation = getOrCreateConversation({
+      source: 'openclaw',
+      channelId,
+      userId: context.get('userId')
+    })
+
+    logger.info({ runId: waitingRun.id, channelId, nextIndex, userInput: userInput.slice(0, 50) }, '▶️ Resuming workflow from wait')
+
+    updateRunStatus(waitingRun.id, 'running', { context: context.toJSON() })
+
+    try {
+      for (let i = nextIndex; i < workflow.steps.length; i++) {
+        await this.runStep({
+          stepDef: workflow.steps[i],
+          stepIndex: i,
+          context,
+          runId: waitingRun.id,
+          conversation,
+          workflow
+        })
+      }
+
+      const doneRun = getRunById(waitingRun.id)
+      if (doneRun && doneRun.status === 'running') {
+        updateRunStatus(waitingRun.id, 'done', {
+          finishedAt: Date.now(),
+          context: context.toJSON()
+        })
+      }
+
+      if (conversation?.id) {
+        const summary = buildConversationSummary(context)
+        const prevHistory = loadConversationHistory(conversation)
+        const updatedHistory = [...prevHistory, summary].slice(-10)
+        updateConversation(conversation.id, {
+          lastRunId: waitingRun.id,
+          context: { history: updatedHistory }
+        })
+      }
+
+      return waitingRun.id
+    } catch (err) {
+      logger.error({ runId: waitingRun.id, err: err.message }, 'Workflow resume failed')
+      updateRunStatus(waitingRun.id, 'failed', {
+        finishedAt: Date.now(),
+        error: err.message,
+        context: context.toJSON()
+      })
+
+      if (workflow?.onError) {
+        await this._handleOnError({ workflow, context, runId: waitingRun.id, err })
+      }
+
+      return null
+    }
   }
 }
 

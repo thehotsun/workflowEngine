@@ -2,8 +2,9 @@
 
 const TRANSITIONS = {
   pending: ['running', 'failed'],
-  running: ['done', 'failed', 'retrying'],
+  running: ['done', 'failed', 'retrying', 'waiting'],
   retrying: ['running', 'failed'],
+  waiting: ['running', 'failed'],
   done: [],
   failed: []
 }

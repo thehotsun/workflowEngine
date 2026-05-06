@@ -47,4 +47,26 @@ function getRecoverableRuns() {
   `).all()
 }
 
-module.exports = { createRun, updateRunStatus, getRunById, getRecoverableRuns }
+/**
+ * 查找指定 channel 的等待中 workflow run
+ * 用于用户回复后恢复执行
+ */
+function getWaitingRun(channelId) {
+  return getDb().prepare(`
+    SELECT * FROM workflow_runs WHERE status = 'waiting' ORDER BY created_at DESC LIMIT 1
+  `).get()
+}
+
+/**
+ * 查找指定 channel 的等待中 workflow run（按 channelId 匹配）
+ */
+function getWaitingRunByChannel(channelId) {
+  return getDb().prepare(`
+    SELECT wr.* FROM workflow_runs wr
+    JOIN conversations c ON c.id = wr.conversation_id
+    WHERE wr.status = 'waiting' AND c.channel_id = ?
+    ORDER BY wr.created_at DESC LIMIT 1
+  `).get(channelId)
+}
+
+module.exports = { createRun, updateRunStatus, getRunById, getRecoverableRuns, getWaitingRun, getWaitingRunByChannel }
