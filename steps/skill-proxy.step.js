@@ -34,7 +34,7 @@ class SkillProxyStep extends BaseStep {
     logger.info({ skill: skillName, input: inputData }, `🔍 调用 OpenClaw Skill: ${skillName}`)
 
     // web-search 特殊处理：使用 web 工具的 search action
-    const toolName = skillName === 'web-search' ? 'web' : skillName
+    const toolName = skillName === 'web-search' ? 'web_search' : skillName
     const action = skillName === 'web-search' ? 'search' : stepDef.action
 
     const result = await openclawClient.invokeTool(toolName, inputData, {
