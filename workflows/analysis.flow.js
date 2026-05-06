@@ -32,6 +32,7 @@ module.exports = {
     // Step 2: 知识库检索
     {
       type: 'rag-query',
+      requires: ['topic'],
       input: ctx => ({ query: ctx.get('topic') }),
       output: 'ragResults',
       topK: 5

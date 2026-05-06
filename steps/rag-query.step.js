@@ -20,7 +20,7 @@ class RagQueryStep extends BaseStep {
   get description() { return '对本地知识库进行向量检索，返回与 topic 相关的文档片段（向量召回 + BM25 重排）' }
   get category() { return 'retrieval' }
   get timeout() { return 20_000 }
-  get requires() { return ['topic'] }
+  get requires() { return [] }
   get provides() { return ['ragResults'] }
 
   async execute(context, stepDef) {

@@ -149,6 +149,7 @@ module.exports = {
     // --------------------------------------------------
     {
       type: 'rag-query',
+      requires: ['topics'],
       input: ctx => ({ query: ctx.get('topics')?.[0]?.title || ctx.get('input') }),
       output: 'ragResults'
     },
