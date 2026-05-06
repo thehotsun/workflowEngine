@@ -144,18 +144,26 @@ module.exports = {
     },
 
     // --------------------------------------------------
-    // 第 3 步：查找知识库
+    // 第 3 步：选定话题
+    // 从 6 个候选中选一个最好的（或者你可以自己选）
+    // --------------------------------------------------
+    {
+      type: 'select-topic'
+    },
+
+    // --------------------------------------------------
+    // 第 4 步：查找知识库
     // 从本地知识库中搜索相关素材，让文章有料
     // --------------------------------------------------
     {
       type: 'rag-query',
-      requires: ['topics'],
-      input: ctx => ({ query: ctx.get('topics')?.[0]?.title || ctx.get('input') }),
+      requires: ['selectedTopic'],
+      input: ctx => ({ query: ctx.get('selectedTopic')?.title || ctx.get('topics')?.[0]?.title || ctx.get('input') }),
       output: 'ragResults'
     },
 
     // --------------------------------------------------
-    // 第 4 步：如果知识库没东西，就去网上搜
+    // 第 5 步：如果知识库没东西，就去网上搜
     // 智能判断：有知识库用知识库，没有就去网上搜索
     // --------------------------------------------------
     {
@@ -167,22 +175,14 @@ module.exports = {
       ifTrue: {
         type: 'skill-proxy',
         skill: 'web-search',
-        input: ctx => ({ 
-          query: ctx.get('topics')?.[0]?.title || ctx.get('input'),
+        input: ctx => ({
+          query: ctx.get('selectedTopic')?.title || ctx.get('topics')?.[0]?.title || ctx.get('input'),
           count: 5
         }),
         output: 'searchResults',
         timeout: 20000
       },
       ifFalse: { type: 'noop' }
-    },
-
-    // --------------------------------------------------
-    // 第 5 步：选定话题
-    // 从 6 个候选中选一个最好的（或者你可以自己选）
-    // --------------------------------------------------
-    {
-      type: 'select-topic'
     },
 
     // --------------------------------------------------
