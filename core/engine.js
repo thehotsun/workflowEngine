@@ -318,10 +318,21 @@ class WorkflowEngine {
   }
 
   /**
-   * 恢复等待中的 workflow run
+   * 恢复等待中的 workflow run。
+   *
+   * 交互式步骤返回 { _wait: true } 后，run 会进入 waiting 状态，并在 context 中记录：
+   * - _waitStepIndex：暂停的步骤下标
+   * - _waitStepName：暂停的步骤名称
+   *
+   * 用户再次发送消息时，webhook 会调用本方法：
+   * 1. 找到当前 channel 下最近一个 waiting run
+   * 2. 将用户消息注入 context.userReply
+   * 3. 从 _waitStepIndex 对应的步骤本身重新执行，而不是从下一步开始
+   * 4. 等待步骤读取 userReply 后产出正式 output，后续步骤再继续执行
+   *
    * @param {string} channelId - 频道 ID
    * @param {string} userInput - 用户输入的文本
-   * @returns {string|null} - runId 或 null
+   * @returns {string|null} - 恢复成功返回 runId，否则返回 null
    */
   async resumeRun(channelId, userInput) {
     const waitingRun = getWaitingRunByChannel(channelId)
@@ -338,13 +349,12 @@ class WorkflowEngine {
     const workflowConfig = normalizeWorkflowConfig(workflow?.config)
     const context = new WorkflowContext({ ...contextData, _runId: waitingRun.id, _config: workflowConfig })
 
-    // 注入用户回复
+    // 注入用户回复；保留原始 input（用户最初的写作需求），只新增 userReply
     context.set('userReply', userInput)
-    context.set('input', userInput)
 
-    // 从等待的下一步继续
+    // 从等待的步骤本身重新执行，让该步骤读取 userReply 完成选择后继续
     const waitStepIndex = contextData._waitStepIndex ?? 0
-    const nextIndex = waitStepIndex + 1
+    const resumeIndex = waitStepIndex
 
     // 加载 conversation
     const conversation = getOrCreateConversation({
@@ -353,13 +363,13 @@ class WorkflowEngine {
       userId: context.get('userId')
     })
 
-    logger.info({ runId: waitingRun.id, channelId, nextIndex, userInput: userInput.slice(0, 50) }, '▶️ Resuming workflow from wait')
+    logger.info({ runId: waitingRun.id, channelId, resumeIndex, userInput: String(userInput || '').slice(0, 50) }, '▶️ Resuming workflow from wait step')
 
     updateRunStatus(waitingRun.id, 'running', { context: context.toJSON() })
 
     try {
-      for (let i = nextIndex; i < workflow.steps.length; i++) {
-        await this.runStep({
+      for (let i = resumeIndex; i < workflow.steps.length; i++) {
+        const result = await this.runStep({
           stepDef: workflow.steps[i],
           stepIndex: i,
           context,
@@ -367,6 +377,10 @@ class WorkflowEngine {
           conversation,
           workflow
         })
+
+        if (result && result._wait) {
+          return waitingRun.id
+        }
       }
 
       const doneRun = getRunById(waitingRun.id)

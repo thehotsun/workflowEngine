@@ -1,7 +1,6 @@
 'use strict'
 
 const BaseStep = require('./base.step')
-const modelRouter = require('../models/router')
 const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('../trigger/outbox-worker')
 const logger = require('../utils/logger')
@@ -9,14 +8,26 @@ const logger = require('../utils/logger')
 /**
  * select-topic step — 从候选话题中选择最合适的一个
  *
- * 流程：
- * 1. 生成候选话题列表
- * 2. 发送话题列表到用户 QQ，等待用户选择
- * 3. 返回 { _wait: true } 暂停 workflow
- * 4. 用户回复后，workflow 引擎自动恢复，从 context.userReply 中读取用户选择
+ * 两阶段交互流程：
+ *
+ * 【阶段一：首次执行】
+ *   - 将候选话题列表发送给用户
+ *   - 返回 { _wait: true } 通知引擎暂停，run 状态变为 waiting
+ *
+ * 【阶段二：恢复执行】
+ *   - 用户回复后，引擎调用 resumeRun()，注入 context.userReply
+ *   - 引擎从本步骤（waitStepIndex）重新执行，此时 userReply 已存在
+ *   - 解析用户选择，写入 selectedTopic / topic，后续步骤正常继续
+ *
+ * 用户回复解析优先级：
+ *   1. T01 / T02 等 ID 精确匹配
+ *   2. 纯数字（1、2、3）
+ *   3. 序数词（第一个、第二个）
+ *   4. 标题关键词模糊匹配
+ *   5. fallback：默认选第一个并给出提示
  *
  * @workflow-config
- * - 无需配置，自动从context读取
+ * - 无需配置，自动从 context 读取
  *
  * @requires ['topics', 'input'] - 候选话题列表和用户原始输入
  * @provides ['selectedTopic', 'topic'] - 选中的完整话题对象和话题标题
@@ -25,7 +36,7 @@ class SelectTopicStep extends BaseStep {
   get name() { return 'select-topic' }
   get description() { return '发送候选话题给用户，等待用户选择后继续' }
   get category() { return 'content-creation' }
-  get timeout() { return 300000 } // 5 分钟超时（等待用户回复）
+  get timeout() { return 30000 }
   get requires() { return ['topics', 'input'] }
   get provides() { return ['selectedTopic', 'topic'] }
 
@@ -106,8 +117,29 @@ class SelectTopicStep extends BaseStep {
       }
     }
 
-    // 尝试用模型解析
-    // fallback: 默认选第一个
+    // 标题关键词模糊匹配：统计 reply 中有多少个汉字/字母出现在标题里
+    // 至少命中 2 个字才采信，防止单字母/标点误判
+    const replyLower = reply.toLowerCase()
+    let bestMatch = null
+    let bestScore = 0
+    for (const topic of topics) {
+      const titleLower = (topic.title || '').toLowerCase()
+      let score = 0
+      for (const ch of replyLower) {
+        // 只统计非空白字符
+        if (ch.trim() && titleLower.includes(ch)) score++
+      }
+      if (score > bestScore) {
+        bestScore = score
+        bestMatch = topic
+      }
+    }
+    if (bestMatch && bestScore >= 2) {
+      logger.info({ userReply, matchedTitle: bestMatch.title, score: bestScore }, '🔍 标题关键词匹配成功')
+      return bestMatch
+    }
+
+    // fallback: 无法解析，默认选第一个
     logger.warn({ userReply }, '⚠️ 无法解析用户选择，默认选第一个')
     return topics[0]
   }
@@ -130,7 +162,7 @@ class SelectTopicStep extends BaseStep {
     })
 
     msg += '────────────\n'
-    msg += '请回复话题编号（如 T01 或 1）或直接输入标题关键词：'
+    msg += '请回复话题编号（如 T01、T02 或 1、2），也可以直接输入标题里的关键词：'
 
     return msg
   }
