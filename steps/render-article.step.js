@@ -11,11 +11,11 @@ const BaseStep = require('./base.step')
  */
 class RenderArticleStep extends BaseStep {
   get name() { return 'render-article' }
-  get description() { return '将结构化文章数据渲染为发布用 HTML 与 Markdown，并提取图片位信息' }
+  get description() { return '将结构化文章数据渲染为发布用 HTML 与 Markdown，并插入已生成图片' }
   get category() { return 'content-creation' }
   get timeout() { return 30000 }
   get requires() { return ['articleData'] }
-  get provides() { return ['finalMarkdown', 'finalHtml', 'images'] }
+  get provides() { return ['finalMarkdown', 'finalHtml', 'images', 'coverImagePath', 'inlineImagePaths'] }
 
   _buildAuthorCard(profile) {
     const authorCard = profile.authorCard || {}
@@ -49,7 +49,7 @@ class RenderArticleStep extends BaseStep {
 
   _escapeHtml(str) {
     if (!str) return ''
-    return str
+    return String(str)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -60,14 +60,13 @@ class RenderArticleStep extends BaseStep {
   _markdownToHtml(str) {
     if (!str) return ''
 
-    // 处理简单的 markdown：**bold** -> <strong>, *em* -> <em>
     let html = String(str)
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
     return html
   }
 
-  _renderArticle(articleData, enabledSlots, profile) {
+  _renderArticle(articleData, enabledSlots, profile, assetSlots = {}) {
     const data = { ...articleData }
     const sections = data.sections || []
     const inlineImages = (data.inline_images || []).filter(img => enabledSlots.has(img.slot))
@@ -81,12 +80,10 @@ class RenderArticleStep extends BaseStep {
     const parts = []
     const partsMarkdown = []
 
-    // Title
     parts.push(`<h1 style="font-size: 26px; font-weight: 700; color: #111; margin-bottom: 8px; line-height: 1.4;">${this._escapeHtml(data.title)}</h1>`)
     partsMarkdown.push(`# ${data.title}`)
     partsMarkdown.push('')
 
-    // Lead
     if (data.lead && data.lead.length > 0) {
       for (const p of data.lead) {
         parts.push(`<p style="font-size: 17px; line-height: 1.8; color: #333; margin-bottom: 16px;">${this._markdownToHtml(this._escapeHtml(p))}</p>`)
@@ -96,16 +93,12 @@ class RenderArticleStep extends BaseStep {
       partsMarkdown.push('')
     }
 
-    // After lead image
     const afterLeadImg = inlineImages.find(img => img.slot === 'after_lead')
     if (afterLeadImg) {
-      parts.push(this._imagePlaceholder(afterLeadImg, 'after_lead'))
-      partsMarkdown.push(`![${this._escapeHtml(afterLeadImg.caption || '')}]()`)
-      partsMarkdown.push(`*${afterLeadImg.caption || ''}*`)
-      partsMarkdown.push('')
+      parts.push(this._imageBlock(afterLeadImg, 'after_lead', assetSlots.after_lead))
+      this._pushMarkdownImage(partsMarkdown, afterLeadImg, assetSlots.after_lead)
     }
 
-    // Sections
     for (let i = 0; i < sections.length; i++) {
       const sec = sections[i]
       const sectionIndex = i + 1
@@ -138,26 +131,20 @@ class RenderArticleStep extends BaseStep {
         partsMarkdown.push('')
       }
 
-      // After section images
-      const afterSectionImg = inlineImages.find(img => img.slot === `after_section_${sectionIndex}`)
+      const slot = `after_section_${sectionIndex}`
+      const afterSectionImg = inlineImages.find(img => img.slot === slot)
       if (afterSectionImg) {
-        parts.push(this._imagePlaceholder(afterSectionImg, `after_section_${sectionIndex}`))
-        partsMarkdown.push(`![${this._escapeHtml(afterSectionImg.caption || '')}]()`)
-        partsMarkdown.push(`*${afterSectionImg.caption || ''}*`)
-        partsMarkdown.push('')
+        parts.push(this._imageBlock(afterSectionImg, slot, assetSlots[slot]))
+        this._pushMarkdownImage(partsMarkdown, afterSectionImg, assetSlots[slot])
       }
     }
 
-    // Before ending image
     const beforeEndingImg = inlineImages.find(img => img.slot === 'before_ending')
     if (beforeEndingImg) {
-      parts.push(this._imagePlaceholder(beforeEndingImg, 'before_ending'))
-      partsMarkdown.push(`![${this._escapeHtml(beforeEndingImg.caption || '')}]()`)
-      partsMarkdown.push(`*${beforeEndingImg.caption || ''}*`)
-      partsMarkdown.push('')
+      parts.push(this._imageBlock(beforeEndingImg, 'before_ending', assetSlots.before_ending))
+      this._pushMarkdownImage(partsMarkdown, beforeEndingImg, assetSlots.before_ending)
     }
 
-    // Ending
     if (data.ending && data.ending.length > 0) {
       for (const p of data.ending) {
         parts.push(`<p style="font-size: 17px; line-height: 1.8; color: #333; margin-bottom: 16px;">${this._markdownToHtml(this._escapeHtml(p))}</p>`)
@@ -165,7 +152,6 @@ class RenderArticleStep extends BaseStep {
       }
     }
 
-    // Author card
     parts.push(authorCard)
 
     const finalHtml = `<article style="max-width: 720px; margin: 0 auto; padding: 24px 16px;">${parts.join('\n')}</article>`
@@ -174,60 +160,79 @@ class RenderArticleStep extends BaseStep {
     return { finalHtml, finalMarkdown }
   }
 
-  _imagePlaceholder(img, slot) {
+  _pushMarkdownImage(partsMarkdown, img, src) {
     const caption = img.caption || ''
+    partsMarkdown.push(`![${caption}](${src || ''})`)
+    if (caption) partsMarkdown.push(`*${caption}*`)
+    partsMarkdown.push('')
+  }
+
+  _imageBlock(img, slot, src) {
+    const caption = img.caption || ''
+    if (src) {
+      const captionHtml = caption
+        ? `<p style="margin: 10px 0 0; font-size: 13px; line-height: 1.6; color: #6b7280; text-align: center;">${this._escapeHtml(caption)}</p>`
+        : ''
+      return `<div data-image-slot="${this._escapeHtml(slot)}" style="margin: 22px 0 26px;"><img src="${this._escapeHtml(src)}" style="width: 100%; max-width: 100%; border-radius: 14px; display: block; box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);" />${captionHtml}</div>`
+    }
+
     return `
       <figure style="margin: 24px 0; text-align: center;">
-        <div data-image-slot="${slot}" data-image-prompt="${this._escapeHtml(img.prompt)}" style="width: 100%; min-height: 300px; background: #f5f5f5; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #888;">
-          [图片待生成：${this._escapeHtml(img.prompt.slice(0, 50))}${img.prompt.length > 50 ? '...' : ''}]
+        <div data-image-slot="${this._escapeHtml(slot)}" data-image-prompt="${this._escapeHtml(img.prompt)}" style="width: 100%; min-height: 300px; background: #f5f5f5; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #888;">
+          [图片待生成：${this._escapeHtml(String(img.prompt || '').slice(0, 50))}${String(img.prompt || '').length > 50 ? '...' : ''}]
         </div>
         ${caption ? `<figcaption style="margin-top: 8px; font-size: 14px; color: #666;">${this._escapeHtml(caption)}</figcaption>` : ''}
       </figure>
     `.trim()
   }
 
-  _extractImages(articleData, enabledSlots) {
+  _extractImages(articleData, enabledSlots, assetSlots = {}) {
     const inlineImages = (articleData.inline_images || []).filter(img => enabledSlots.has(img.slot))
-
     const images = []
 
-    // Cover image
     if (articleData.cover_prompt) {
       images.push({
         slot: 'cover',
         prompt: articleData.cover_prompt,
-        caption: null
+        caption: null,
+        src: assetSlots.cover || null
       })
     }
 
-    // Inline images
     for (const img of inlineImages) {
       images.push({
         slot: img.slot,
         prompt: img.prompt,
-        caption: img.caption
+        caption: img.caption,
+        src: assetSlots[img.slot] || null
       })
     }
 
     return images
   }
 
-  async execute(context, stepDef) {
+  async execute(context) {
     const articleData = context.get('articleData')
     const config = context.get('_config') || {}
     const accountProfile = config.accountProfile || {}
     const imagesConfig = config.images || {}
     const enabledSlots = new Set(imagesConfig.enabledSlots || ['after_lead', 'after_section_1', 'after_section_2', 'before_ending'])
+    const coverImagePath = context.get('coverImagePath') || null
+    const inlineImagePaths = context.get('inlineImagePaths') || {}
+    const assetSlots = { ...inlineImagePaths }
+    if (coverImagePath) assetSlots.cover = coverImagePath
 
-    const { finalHtml, finalMarkdown } = this._renderArticle(articleData, enabledSlots, accountProfile)
-    const images = this._extractImages(articleData, enabledSlots)
+    const { finalHtml, finalMarkdown } = this._renderArticle(articleData, enabledSlots, accountProfile, assetSlots)
+    const images = this._extractImages(articleData, enabledSlots, assetSlots)
 
     return {
       ok: true,
       output: {
         finalMarkdown,
         finalHtml,
-        images
+        images,
+        coverImagePath,
+        inlineImagePaths
       }
     }
   }

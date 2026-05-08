@@ -18,6 +18,7 @@ const ResearchStep = require('./research.step')
 const ImageGenerateStep = require('./image-generate.step')
 const FetchHotspotsStep = require('./fetch-hotspots.step')
 const RenderArticleStep = require('./render-article.step')
+const PlatformPublishStep = require('./platform-publish.step')
 const WebSearchStep = require('./web-search.step')
 
 const STEP_REGISTRY = {
@@ -38,6 +39,7 @@ const STEP_REGISTRY = {
   'image-generate':  (def, deps) => new ImageGenerateStep(),
   'fetch-hotspots':  (def, deps) => new FetchHotspotsStep(),
   'render-article':  (def, deps) => new RenderArticleStep(),
+  'platform-publish': (def, deps) => new PlatformPublishStep(),
   'web-search':      (def, deps) => new WebSearchStep(),
 }
 

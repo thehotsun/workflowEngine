@@ -20,9 +20,10 @@
 11. [Context 数据流示例](#11-context-数据流示例)
 12. [新增 Step 完整示例](#12-新增-step-完整示例)
 13. [Workflow 中使用新 Step](#13-workflow-中使用新-step)
-14. [Workflow 级 config 约定](#14-workflow-级-config-约定)
-15. [常见错误与排查](#15-常见错误与排查)
-16. [AI 编排提示语模板（可直接复制）](#16-ai-编排提示语模板可直接复制)
+14. [Step 配置归属规则](#14-step-配置归属规则)
+15. [Workflow 级 config 约定](#15-workflow-级-config-约定)
+16. [常见错误与排查](#16-常见错误与排查)
+17. [AI 编排提示语模板（可直接复制）](#17-ai-编排提示语模板可直接复制)
 
 ---
 
@@ -420,9 +421,69 @@ const STEP_REGISTRY = {
 
 ---
 
-## 14. Workflow 级 config 约定
+## 14. Step 配置归属规则
 
-### 14.1 机制说明
+> **改动任何 step 之前，必须先对照本节确认配置放在正确的位置。**
+
+### 14.1 两类配置的定义
+
+| 类型 | 判断标准 | 存放位置 | 允许流程内覆盖？ |
+|---|---|---|---|
+| **纯功能配置** | 与账号/品牌/平台身份无关，描述"怎么做"（接口地址、模型名、超时、密钥等） | 只放 `.env`，step 代码直接读 `config.*` | **不允许** |
+| **账号/品牌配置** | 与具体账号、品牌、平台身份绑定（公众号 appId/appSecret、署名、风格参数等） | `.env` 作为默认值，同时允许在 workflow `_config` 或 `stepDef` 中覆盖 | **允许** |
+
+### 14.2 判断流程
+
+```
+新增/修改一个配置项时，问自己：
+  "换一个账号/品牌就需要改这个值吗？"
+      是 → 账号/品牌配置：env 设默认，允许 workflow 覆盖
+      否 → 纯功能配置：只放 env，step 代码固定读 config.*
+```
+
+### 14.3 纯功能配置示例（只读 env）
+
+```js
+// ✅ 正确：直接读 config，不接受 imagesConfig/stepDef 覆盖
+const apiKey    = config.OPENAI_API_KEY
+const model     = config.OPENAI_IMAGE_MODEL     || 'gpt-image-1'
+const assetDir  = config.IMAGE_ASSET_DIR        || 'data/article-assets'
+const apiBase   = config.OPENVERSE_API_BASE     || 'https://api.openverse.org/v1'
+const token     = config.OPENVERSE_ACCESS_TOKEN
+const enabled   = isEnabled(config.FREE_PHOTO_ENABLED, true)
+
+// ❌ 错误：让 workflow config 覆盖图片接口地址或 API Key
+const apiKey = imagesConfig.apiKey || config.OPENAI_API_KEY   // 不允许
+```
+
+### 14.4 账号/品牌配置示例（env 默认 + 允许覆盖）
+
+```js
+// ✅ 正确：env 作默认值，stepDef/platformConfig 可以覆盖
+const appId    = platformConfig.appId    || config.WECHAT_APP_ID
+const author   = platformConfig.author   || config.WECHAT_AUTHOR || '公众号编辑部'
+
+// workflow 中允许这样覆盖：
+// platforms: [{ type: 'wechat', enabled: true, appId: 'xxx', appSecret: 'yyy' }]
+```
+
+### 14.5 step 代码规范
+
+1. **纯功能配置**：不在 `execute()` 里从 `context.get('_config')` 或 `stepDef` 中读取，也不在方法签名里传入 `imagesConfig` 等对象。
+2. **账号/品牌配置**：遵循优先级 `stepDef/platformConfig` > `_config.*` > `config.*`（env）> 硬编码默认。
+3. **文件头部注释**：改动 step 时，在文件头部 `需要的配置` 块中注明哪些是"只从 .env 读"、哪些是"env 默认 + 允许覆盖"。
+
+### 14.6 workflow 文件规范
+
+1. **不得**在 workflow 的 `config` 区域配置纯功能项（如 `assetDir`、`freePhotoEnabled`、API Key）。
+2. **应该**在 workflow 的 `config` 区域配置账号/品牌项（如 `accountProfile`、`publishing.platforms`）。
+3. 若发现 workflow 里有纯功能配置，移入 `.env`，同步删除 workflow 中的字段。
+
+---
+
+## 15. Workflow 级 config 约定
+
+### 15.1 机制说明
 
 Workflow 定义文件可在顶层添加 `config` 字段（纯 JSON 对象）。Engine 启动时将其注入 context，key 为 `_config`，所有 step 均可直接读取：
 
@@ -450,7 +511,7 @@ const topK = stepDef.topK || context.get('_config')?.ragQuery?.topK || 5
 
 `_config` 遵循 `_` 前缀约定：step 可读取，不应修改。
 
-### 14.2 双向约定规则
+### 15.2 双向约定规则
 
 使用 `_config` 字段需在**两处**同时声明，形成可追溯的契约：
 
@@ -481,7 +542,7 @@ class WriteStep extends BaseStep { ... }
 
 如果一个 step **不消费任何 `_config` 字段**，则不需要添加 `@workflow-config` 块。
 
-### 14.3 现有 config 字段速查表
+### 15.3 现有 config 字段速查表
 
 | `_config` 路径 | 类型 | 默认值 | 消费 Step | 说明 |
 |---|---|---|---|---|
@@ -496,7 +557,7 @@ class WriteStep extends BaseStep { ... }
 
 ---
 
-## 15. 常见错误与排查
+## 16. 常见错误与排查
 
 ### 错误 1：`Unknown step type: "xxx"`
 
@@ -536,11 +597,11 @@ class WriteStep extends BaseStep { ... }
 
 ---
 
-## 16. AI 编排规则与 Step 完整清单
+## 17. AI 编排规则与 Step 完整清单
 
 > **本节设计目标**：AI 读完本文件后可直接生成可执行 workflow，用户无需额外提供 prompt 或 catalog。
 
-### 16.1 编排硬约束（AI 必须遵守）
+### 17.1 编排硬约束（AI 必须遵守）
 
 1. **优先使用 §16.2 catalog 中已存在的 `type`**。若当前 catalog 没有合适 step，必须先按本指南约束新增 step，并在同步 catalog 后再在 workflow 中引用新 type。
 2. **每个 step 的 `requires`，必须在”初始 context”或”前序步骤 provides / stepDef.output 写入的 key”中已满足**。
@@ -565,7 +626,7 @@ class WriteStep extends BaseStep { ... }
    | `event` | object | 完整事件对象 |
    | `conversation` | object | 会话记录（来自 DB） |
 
-### 16.2 Step Catalog（当前全量，与代码同步）
+### 17.2 Step Catalog（当前全量，与代码同步）
 
 > 新增 step 后执行 `node scripts/update-step-guide.js` 更新此 JSON。
 > JSON 字段含义：`type` 注册名 / `description` 能力说明 / `category` 分类 / `requires` 前置 context key / `provides` 执行后写入的 key / `retryable` 是否重试 / `timeout` 默认超时(ms)。
@@ -616,15 +677,13 @@ class WriteStep extends BaseStep { ... }
     "requires": [],
     "provides": [],
     "retryable": true,
-    "timeout": 15000
+    "timeout": 20000
   },
   {
     "type": "rag-query",
     "description": "对本地知识库进行向量检索，返回与 topic 相关的文档片段（向量召回 + BM25 重排）",
     "category": "retrieval",
-    "requires": [
-      "topic"
-    ],
+    "requires": [],
     "provides": [
       "ragResults"
     ],
@@ -716,7 +775,7 @@ class WriteStep extends BaseStep { ... }
   },
   {
     "type": "select-topic",
-    "description": "从候选话题中选择一个最合适的话题（支持用户显式选择、模型选择和评分回退）",
+    "description": "发送候选话题给用户，等待用户选择后继续",
     "category": "content-creation",
     "requires": [
       "topics",
@@ -744,17 +803,21 @@ class WriteStep extends BaseStep { ... }
   },
   {
     "type": "image-generate",
-    "description": "根据选定话题自动匹配场景，生成封面图提示词和文章内插图提示词（无需调用图片 API）",
+    "description": "根据选定话题生成封面图和文章内插图，并调用图片 API 产出可发布图片",
     "category": "content-creation",
     "requires": [
       "selectedTopic"
     ],
     "provides": [
       "coverPrompt",
-      "inlineImages"
+      "inlineImages",
+      "coverImagePath",
+      "inlineImagePaths",
+      "imageNotes",
+      "photoSources"
     ],
     "retryable": true,
-    "timeout": 60000
+    "timeout": 300000
   },
   {
     "type": "fetch-hotspots",
@@ -769,7 +832,7 @@ class WriteStep extends BaseStep { ... }
   },
   {
     "type": "render-article",
-    "description": "将结构化文章数据渲染为发布用 HTML 与 Markdown，并提取图片位信息",
+    "description": "将结构化文章数据渲染为发布用 HTML 与 Markdown，并插入已生成图片",
     "category": "content-creation",
     "requires": [
       "articleData"
@@ -777,16 +840,42 @@ class WriteStep extends BaseStep { ... }
     "provides": [
       "finalMarkdown",
       "finalHtml",
-      "images"
+      "images",
+      "coverImagePath",
+      "inlineImagePaths"
     ],
     "retryable": true,
     "timeout": 30000
+  },
+  {
+    "type": "platform-publish",
+    "description": "将文章提交到发布平台草稿箱，当前支持微信公众号并预留多平台扩展",
+    "category": "output",
+    "requires": [
+      "articleData",
+      "finalHtml"
+    ],
+    "provides": [
+      "platformPublishResults",
+      "wechatDraftMediaId"
+    ],
+    "retryable": true,
+    "timeout": 180000
+  },
+  {
+    "type": "web-search",
+    "description": "调用 OpenClaw web-search 搜索最新资讯",
+    "category": "integration",
+    "requires": [],
+    "provides": [],
+    "retryable": true,
+    "timeout": 20000
   }
 ]
 ```
 <!-- CATALOG_JSON_END -->
 
-### 16.3 新增 Step 实施规范（当 catalog 无可用能力时）
+### 17.3 新增 Step 实施规范（当 catalog 无可用能力时）
 
 当需求无法由现有 catalog 覆盖时，AI 必须先补齐能力，再做流程编排。最小动作清单如下：
 
@@ -799,7 +888,7 @@ class WriteStep extends BaseStep { ... }
 
 > 禁止“先引用不存在 type，后补实现”的倒序编排。
 
-### 16.4 生成 workflow 的输出格式
+### 17.4 生成 workflow 的输出格式
 
 AI 根据用户需求生成 workflow 时，必须返回以下三段：
 
@@ -845,18 +934,19 @@ publish requires: [article, channelId, _runId]
 - publish 依赖 channelId，若事件来源没有 channelId 则流程失败
 ```
 
-### 16.5 最小检查清单
+### 17.5 最小检查清单
 
 生成或人工编写 workflow 后，必须逐条确认：
 
-- [ ] 所有 `type` 均存在于 §16.2 catalog（新增 step 须先按 §16.3 完成实现与同步再引用）。
+- [ ] 所有 `type` 均存在于 §17.2 catalog（新增 step 须先按 §17.3 完成实现与同步再引用）。
 - [ ] 每一步 `requires` 都有明确上游来源（初始 context 或前序 provides）。
 - [ ] 数组 / 原始值输出已配置 `stepDef.output`（对象输出则不需要）。
 - [ ] flow-control step 不承担内容生产。
 - [ ] 流程终点产出满足目标（如 `article` / `finalMarkdown` / publish 动作）。
 - [ ] 涉及 `_config` 的读取已在 workflow 端注释消费方，在 step 端声明 `@workflow-config`。
 - [ ] 若本次引入了新 step：`steps/index.js` 已注册，`update-step-guide.js` 已执行，catalog 已更新。
+- [ ] **配置归属规则（§14）已遵守**：纯功能配置只放 `.env`，账号/品牌配置才允许 workflow 覆盖；workflow 文件中不出现纯功能配置字段。
 
 ---
 
-*文档最后更新：2026-04-23*
+*文档最后更新：2026-05-08*

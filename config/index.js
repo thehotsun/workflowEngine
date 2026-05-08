@@ -15,6 +15,26 @@ module.exports = {
   BAILIAN_EMBED_MODEL: process.env.BAILIAN_EMBED_MODEL || 'text-embedding-v4',
   EMBEDDING_DIMENSION: Number(process.env.EMBEDDING_DIMENSION || 1024),
 
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || process.env.AI_API_KEY || process.env.LLM_API_KEY || '',
+  OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE || process.env.OPENAI_API_BASE_URL || 'https://api.openai.com/v1',
+  OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL || process.env.AI_IMAGE_MODEL || 'gpt-image-1',
+  OPENAI_IMAGE_SIZE: process.env.OPENAI_IMAGE_SIZE || '1536x1024',
+  OPENAI_IMAGE_QUALITY: process.env.OPENAI_IMAGE_QUALITY || 'low',
+
+  FREE_PHOTO_ENABLED: process.env.FREE_PHOTO_ENABLED,
+  OPENVERSE_API_BASE: process.env.OPENVERSE_API_BASE || 'https://api.openverse.org/v1',
+  OPENVERSE_ACCESS_TOKEN: process.env.OPENVERSE_ACCESS_TOKEN || '',
+  FREE_PHOTO_TIMEOUT: Number(process.env.FREE_PHOTO_TIMEOUT || 60000),
+  IMAGE_ASSET_DIR: process.env.IMAGE_ASSET_DIR || path.join('data', 'article-assets'),
+
+  WECHAT_APP_ID: process.env.WECHAT_APP_ID || '',
+  WECHAT_APP_SECRET: process.env.WECHAT_APP_SECRET || '',
+  WECHAT_AUTHOR: process.env.WECHAT_AUTHOR || '公众号编辑部',
+  WECHAT_SHOW_COVER_PIC: Number(process.env.WECHAT_SHOW_COVER_PIC || 0),
+  WECHAT_NEED_OPEN_COMMENT: Number(process.env.WECHAT_NEED_OPEN_COMMENT || 1),
+  WECHAT_ONLY_FANS_CAN_COMMENT: Number(process.env.WECHAT_ONLY_FANS_CAN_COMMENT || 0),
+  WECHAT_TOKEN_CACHE_PATH: process.env.WECHAT_TOKEN_CACHE_PATH || path.join('data', 'wechat_token_cache.json'),
+
   OPENCLAW_BASE_URL: process.env.OPENCLAW_BASE_URL || 'http://127.0.0.1:18789',
   OPENCLAW_GATEWAY_TOKEN: process.env.OPENCLAW_GATEWAY_TOKEN || '',
   OPENCLAW_DEFAULT_SESSION_KEY: process.env.OPENCLAW_DEFAULT_SESSION_KEY || '',

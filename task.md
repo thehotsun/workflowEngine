@@ -587,6 +587,125 @@ POST /tools/invoke
 - scheduler：业务 cron + 每日 WAL checkpoint。
 - `/health`：当前为存活检查，后续可扩展深度探测。
 
+## 8.6 article_flow 当前有效性评估（2026-05-06）
+
+### 评估背景
+
+基于一次 `写文章 -> 用户选择候选话题 -> 生成文章 -> QQ 发送` 的实际运行日志，对 `workflows/article.flow.js` 当前 step 链路进行核对，重点判断哪些 step 只是声明存在但未真正影响最终输出。
+
+### 当前实际有效链路
+
+```text
+fetch-hotspots
+  -> generate-topics
+  -> select-topic
+  -> rag-query
+  -> conditional(web-search，仅 ragResults 为空时触发)
+  -> research
+  -> write
+  -> polish
+  -> publish
+```
+
+其中最终用户看到的内容来自：
+
+```text
+write 输出 article
+  -> polish 覆盖 article
+  -> publish 发送 article
+```
+
+### Step 有效性判断
+
+| Step | 当前状态 | 判断 |
+|---|---|---|
+| `fetch-hotspots` | 有效 | 真实抓取微博/头条/百度热点，失败时降级 sample 数据。 |
+| `generate-topics` | 有效 | LLM 生成候选话题，日志中已验证候选话题发送成功。 |
+| `select-topic` | 有效 | 支持发送候选列表、等待用户回复、恢复 workflow。 |
+| `rag-query` | 部分有效 | 当前 embedding 请求 404，但 retriever 会降级 text search。需修复 embedding 配置。 |
+| `conditional` / `web-search` | 条件有效 | 仅当 `ragResults` 为空时触发；本次日志无法确认是否走到。 |
+| `research` | 有效 | LLM 输出研究摘要，服务后续写作。 |
+| `write` | 有效 | 生成结构化 `articleData` 与最终基础 `article`。 |
+| `image-generate` | 无实际效果 | 只生成 `coverPrompt` / `inlineImages`，不调用图片 API，且后续未消费这些字段。 |
+| `render-article` | 当前流程中无效 | 会生成 `finalMarkdown` / `finalHtml` / `images`，但后续 `polish` 和 `publish` 均不使用。 |
+| `polish` | 有效 | LLM 润色并覆盖 `article`。 |
+| `publish` | 有效 | 写入 outbox 并发送 `article`。 |
+
+### 关键问题
+
+1. `image-generate` 名称与实际行为不一致。
+   - 当前实现只是基于关键词生成图片提示词。
+   - 不生成真实图片。
+   - 输出字段 `coverPrompt` / `inlineImages` 与 `articleData.cover_prompt` / `articleData.inline_images` 不一致，后续不消费。
+
+2. `render-article` 产物未进入发布链路。
+   - `render-article` 输出 `finalMarkdown`、`finalHtml`、`images`。
+   - `polish` 仍读取并覆盖 `article`。
+   - `publish` 仍发送 `article`。
+   - 因此 HTML 排版、作者卡片、图片占位最终不可见。
+
+3. RAG embedding 当前不可用。
+   - 日志出现 `Embedding request failed: 404`。
+   - 系统降级到 text search，流程不中断。
+   - 但向量检索质量未生效，需要修复百炼 embedding endpoint/model 配置。
+
+### 建议迭代方向
+
+#### 方案 A：保留纯文本文章链路，删除/禁用无效 step
+
+目标：让流程与实际产出一致，减少误导。
+
+范围：
+
+- 从 `article.flow.js` 移除或注释 `image-generate`。
+- 从 `article.flow.js` 移除或注释 `render-article`。
+- 文档说明当前发布形态为纯 Markdown 文本。
+
+验收：
+
+- step_runs 中不再出现无消费产物的 `image-generate` / `render-article`。
+- 最终消息内容仍由 `write -> polish -> publish` 产生。
+
+#### 方案 B：打通排版发布链路
+
+目标：让 `render-article` 的结果成为最终发布内容。
+
+范围：
+
+- 明确最终发布字段使用 `finalMarkdown` 还是 `finalHtml`。
+- 若 QQ 只适合 Markdown/纯文本，`publish` 可优先发送 `finalMarkdown`。
+- 若后续面向公众号后台，需将 `finalHtml` 存储或导出，而不是直接发 QQ。
+- 调整 `polish` 与 `render-article` 顺序，建议：`write -> polish -> render-article -> publish`。
+
+验收：
+
+- 最终发送内容包含 `render-article` 生成的排版、图片占位或作者卡片。
+- `publish` 不再忽略 `finalMarkdown` / `finalHtml`。
+
+#### 方案 C：实现真正图片生成能力
+
+目标：让 `image-generate` 名副其实。
+
+范围：
+
+- 接入真实图片生成模型或 OpenClaw 图片工具。
+- 统一字段命名：要么写回 `articleData.cover_prompt` / `articleData.inline_images`，要么让 `render-article` 消费 `coverPrompt` / `inlineImages`。
+- 输出真实图片 URL、本地文件路径或可发布资源 ID。
+- `render-article` 使用真实图片资源替代 `[图片待生成]` 占位。
+
+验收：
+
+- `image-generate` 输出包含真实图片资源。
+- `render-article` 或 `publish` 能消费这些图片资源。
+- 最终发布内容中能看到图片或图片链接。
+
+### 当前优先级建议
+
+1. P0：修复 RAG embedding 404，恢复向量检索质量。
+2. P0：确定文章最终发布形态：纯 Markdown、HTML、还是公众号素材包。
+3. P1：根据发布形态决定删除 `render-article`，或打通 `finalMarkdown/finalHtml` 到 `publish`。
+4. P1：将 `image-generate` 改名为 `image-prompt-generate`，或实现真实图片生成。
+
 ---
 
 ## 九、关键链路时序（简版）
@@ -756,6 +875,10 @@ POST /tools/invoke
 - [ ] 统一日志字段规范落地
 - [ ] 运行指标聚合与可视化输出
 - [ ] analysis_flow 启用策略定义与灰度方案
+- [ ] 修复 RAG embedding 404（百炼 endpoint/model 配置核查）
+- [ ] 确定 article_flow 最终发布形态（纯 Markdown / HTML / 公众号素材包）
+- [ ] 根据发布形态决定：删除无效 render-article 或打通 finalMarkdown/finalHtml 到 publish
+- [ ] image-generate 改名或实现真实图片生成能力
 
 ---
 
