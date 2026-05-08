@@ -15,7 +15,9 @@
  * 需要的配置：
  * - FREE_PHOTO_ENABLED：是否启用免费图库，默认启用；设为 0 / false / no / off 可关闭。
  * - OPENVERSE_API_BASE：Openverse API 地址，默认 https://api.openverse.org/v1。
- * - OPENVERSE_ACCESS_TOKEN：Openverse token，需要放在 .env 里；用于调用免费图库搜索接口。
+ * - OPENVERSE_CLIENT_ID：Openverse client_id，需要放在 .env 里；用于自动获取免费图库 token。
+ * - OPENVERSE_CLIENT_SECRET：Openverse client_secret，需要放在 .env 里；用于自动获取免费图库 token。
+ * - OPENVERSE_ACCESS_TOKEN：可选；已有 token 会优先使用，过期后用 client_id/client_secret 自动刷新。
  * - FREE_PHOTO_TIMEOUT：免费图库搜索和下载超时时间，默认 60000 毫秒。
  * - IMAGE_ASSET_DIR：图片保存根目录，默认 data/article-assets。
  * - OPENAI_API_KEY：免费图库失败后调用图片生成接口所需；不配置则无法走 AI 生图兜底。
@@ -29,7 +31,7 @@
  * - 和账号、品牌、平台身份有关的配置，才使用 env 作为默认值，并允许流程内覆盖。
  *
  * 直接运行说明：
- * - 想用免费图库，需要配置 OPENVERSE_ACCESS_TOKEN（去 https://api.openverse.org/v1/auth_tokens/register/ 免费注册）。
+ * - 想用免费图库，需要配置 OPENVERSE_CLIENT_ID 和 OPENVERSE_CLIENT_SECRET（去 https://api.openverse.org/v1/auth_tokens/register/ 免费注册）。
  * - 想用 AI 生图兜底，需要配置 OPENAI_API_KEY。
  * - 两个都不配置时 step 不会报错，图片路径返回空，render-article 降级为占位符，但公众号草稿箱发布会失败（必须有封面图）。
  */
@@ -40,6 +42,47 @@ const { URLSearchParams } = require('url')
 const OpenAI = require('openai')
 const BaseStep = require('./base.step')
 const config = require('../config')
+
+const openverseInitialToken = String(config.OPENVERSE_ACCESS_TOKEN || '').trim()
+const openverseTokenCache = {
+  accessToken: openverseInitialToken,
+  expireAt: openverseInitialToken ? Date.now() + 12 * 60 * 60 * 1000 - 60000 : 0
+}
+
+async function getOpenverseToken(apiBase, timeout) {
+  const now = Date.now()
+  if (openverseTokenCache.accessToken && now < openverseTokenCache.expireAt) {
+    return openverseTokenCache.accessToken
+  }
+
+  const clientId = String(config.OPENVERSE_CLIENT_ID || '').trim()
+  const clientSecret = String(config.OPENVERSE_CLIENT_SECRET || '').trim()
+  if (!clientId || !clientSecret) {
+    return openverseTokenCache.accessToken
+  }
+
+  const res = await fetch(`${apiBase}/auth_tokens/token/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'workflow-engine/1.0'
+    },
+    body: JSON.stringify({
+      grant_type: 'client_credentials',
+      client_id: clientId,
+      client_secret: clientSecret
+    }),
+    signal: AbortSignal.timeout(timeout)
+  })
+  if (!res.ok) throw new Error(`Openverse token failed: ${res.status}`)
+
+  const data = await res.json()
+  if (!data.access_token) throw new Error('Openverse token response missing access_token')
+
+  openverseTokenCache.accessToken = data.access_token
+  openverseTokenCache.expireAt = now + Number(data.expires_in || 43200) * 1000 - 60000
+  return openverseTokenCache.accessToken
+}
 
 function isEnabled(value, defaultValue = true) {
   if (value === undefined || value === null || value === '') return defaultValue
@@ -151,7 +194,7 @@ class ImageGenerateStep extends BaseStep {
   }
 
   async _generateCoverImage({ articleData, coverPrompt, assetsDir, imageNotes, photoSources }) {
-    const freePhoto = this._freePhotoConfig()
+    const freePhoto = await this._freePhotoConfig()
     if (freePhoto.enabled) {
       try {
         const queries = this._buildPhotoQueries(`${articleData.title || ''} ${coverPrompt}`, 'cover')
@@ -182,7 +225,7 @@ class ImageGenerateStep extends BaseStep {
   }
 
   async _generateInlineImage({ articleData, prompt, caption, slot, index, assetsDir, imageNotes, photoSources }) {
-    const freePhoto = this._freePhotoConfig()
+    const freePhoto = await this._freePhotoConfig()
     if (freePhoto.enabled) {
       try {
         const queries = this._buildPhotoQueries(`${articleData.title || ''} ${prompt} ${caption}`, slot)
@@ -212,12 +255,15 @@ class ImageGenerateStep extends BaseStep {
     }
   }
 
-  _freePhotoConfig() {
+  async _freePhotoConfig() {
+    const apiBase = String(config.OPENVERSE_API_BASE || 'https://api.openverse.org/v1').replace(/\/$/, '')
+    const timeout = Number(config.FREE_PHOTO_TIMEOUT || 60000)
+
     return {
       enabled: isEnabled(config.FREE_PHOTO_ENABLED, true),
-      apiBase: String(config.OPENVERSE_API_BASE || 'https://api.openverse.org/v1').replace(/\/$/, ''),
-      accessToken: String(config.OPENVERSE_ACCESS_TOKEN || '').trim(),
-      timeout: Number(config.FREE_PHOTO_TIMEOUT || 60000)
+      apiBase,
+      accessToken: await getOpenverseToken(apiBase, timeout),
+      timeout
     }
   }
 
