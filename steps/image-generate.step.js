@@ -42,11 +42,50 @@ const { URLSearchParams } = require('url')
 const OpenAI = require('openai')
 const BaseStep = require('./base.step')
 const config = require('../config')
+const logger = require('../utils/logger')
+const { enqueueMessage } = require('../persist/repos/outbox.repo')
+const { outboxEmitter } = require('../trigger/outbox-worker')
 
 const openverseInitialToken = String(config.OPENVERSE_ACCESS_TOKEN || '').trim()
 const openverseTokenCache = {
   accessToken: openverseInitialToken,
   expireAt: openverseInitialToken ? Date.now() + 12 * 60 * 60 * 1000 - 60000 : 0
+}
+
+// OpenAI 动态 token 缓存（仅在配置了 OPENAI_TOKEN_URL 时生效）
+const openaiTokenCache = {
+  apiKey: null,
+  expireAt: 0
+}
+
+/**
+ * 调用 OPENAI_TOKEN_URL 刷新 OpenAI API Key / token。
+ * 接口需返回 JSON { token: '...' } 或 { api_key: '...' }，过期时间可选字段 expires_in（秒）。
+ * 若未配置 OPENAI_TOKEN_URL，则直接返回 config.OPENAI_API_KEY。
+ */
+async function refreshOpenAIToken() {
+  const tokenUrl = String(config.OPENAI_TOKEN_URL || '').trim()
+  if (!tokenUrl) return String(config.OPENAI_API_KEY || '').trim()
+
+  const now = Date.now()
+  if (openaiTokenCache.apiKey && now < openaiTokenCache.expireAt) {
+    return openaiTokenCache.apiKey
+  }
+
+  const res = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': 'workflow-engine/1.0' },
+    signal: AbortSignal.timeout(15000)
+  })
+  if (!res.ok) throw new Error(`OpenAI token refresh failed: ${res.status}`)
+
+  const data = await res.json()
+  const newKey = String(data.token || data.api_key || '').trim()
+  if (!newKey) throw new Error('OpenAI token refresh response missing token/api_key field')
+
+  openaiTokenCache.apiKey = newKey
+  openaiTokenCache.expireAt = now + Number(data.expires_in || 3600) * 1000 - 60000
+  return newKey
 }
 
 async function getOpenverseToken(apiBase, timeout) {
@@ -151,13 +190,40 @@ class ImageGenerateStep extends BaseStep {
     const photoSources = []
     const inlineImagePaths = {}
 
-    const coverImagePath = await this._generateCoverImage({
-      articleData,
-      coverPrompt,
-      assetsDir,
-      imageNotes,
-      photoSources
-    })
+    let coverImagePath = null
+    try {
+      coverImagePath = await this._generateCoverImage({
+        articleData,
+        coverPrompt,
+        assetsDir,
+        imageNotes,
+        photoSources
+      })
+    } catch (err) {
+      if (err.isAuthFailed) {
+        logger.error(
+          { runId, step: this.name, error: err.message, allNotes: imageNotes },
+          'image-generate step: 生图认证失败，暂停流程，等待操作人处理后从本步骤重试'
+        )
+        this._notifyPause({ context, runId, reason: err.message, imageNotes })
+        return {
+          ok: false,
+          _wait: true,
+          _waitType: 'operator_resume',
+          output: {
+            articleData,
+            coverPrompt,
+            inlineImages,
+            coverImagePath: null,
+            inlineImagePaths: {},
+            imageNotes,
+            photoSources,
+            _pauseReason: err.message
+          }
+        }
+      }
+      imageNotes.push(`封面图生成失败：${err.message}`)
+    }
 
     for (let i = 0; i < inlineImages.length; i++) {
       const imageItem = inlineImages[i]
@@ -166,17 +232,43 @@ class ImageGenerateStep extends BaseStep {
       const caption = String(imageItem.caption || '').trim()
       if (!slot || !prompt) continue
 
-      const imagePath = await this._generateInlineImage({
-        articleData,
-        prompt,
-        caption,
-        slot,
-        index: i + 1,
-        assetsDir,
-        imageNotes,
-        photoSources
-      })
-      if (imagePath) inlineImagePaths[slot] = imagePath
+      try {
+        const imagePath = await this._generateInlineImage({
+          articleData,
+          prompt,
+          caption,
+          slot,
+          index: i + 1,
+          assetsDir,
+          imageNotes,
+          photoSources
+        })
+        if (imagePath) inlineImagePaths[slot] = imagePath
+      } catch (err) {
+        if (err.isAuthFailed) {
+          logger.error(
+            { runId, step: this.name, slot, error: err.message, allNotes: imageNotes },
+            'image-generate step: 插图认证失败，暂停流程，等待操作人处理后从本步骤重试'
+          )
+          this._notifyPause({ context, runId, reason: err.message, imageNotes })
+          return {
+            ok: false,
+            _wait: true,
+            _waitType: 'operator_resume',
+            output: {
+              articleData,
+              coverPrompt,
+              inlineImages,
+              coverImagePath,
+              inlineImagePaths,
+              imageNotes,
+              photoSources,
+              _pauseReason: err.message
+            }
+          }
+        }
+        imageNotes.push(`插图 ${i + 1}（${slot}）生成失败：${err.message}`)
+      }
     }
 
     return {
@@ -217,9 +309,10 @@ class ImageGenerateStep extends BaseStep {
     }
 
     try {
-      return await this._generateImageByOpenAI(coverPrompt, path.join(assetsDir, 'cover.png'))
+      return await this._generateImageByOpenAI(coverPrompt, path.join(assetsDir, 'cover.png'), imageNotes)
     } catch (err) {
       imageNotes.push(`封面图提示词：${coverPrompt}\n失败原因：${err.message}`)
+      if (err.isAuthFailed) throw err   // 认证失败向上抛，让 execute 暂停流程
       return null
     }
   }
@@ -248,9 +341,10 @@ class ImageGenerateStep extends BaseStep {
     }
 
     try {
-      return await this._generateImageByOpenAI(prompt, path.join(assetsDir, `inline_${index}.png`))
+      return await this._generateImageByOpenAI(prompt, path.join(assetsDir, `inline_${index}.png`), imageNotes)
     } catch (err) {
       imageNotes.push(`插图 ${index}（${slot}）提示词：${prompt}\n失败原因：${err.message}`)
+      if (err.isAuthFailed) throw err   // 认证失败向上抛
       return null
     }
   }
@@ -264,6 +358,26 @@ class ImageGenerateStep extends BaseStep {
       apiBase,
       accessToken: await getOpenverseToken(apiBase, timeout),
       timeout
+    }
+  }
+
+  _notifyPause({ context, runId, reason, imageNotes }) {
+    const channelId = context.get('channelId')
+    if (!channelId) return
+    const notes = imageNotes && imageNotes.length ? `\n详情：${imageNotes.slice(-3).join('；')}` : ''
+    const content = [
+      `⚠️ 图片生成步骤因认证失败已暂停`,
+      `runId：${runId}`,
+      `原因：${reason}${notes}`,
+      ``,
+      `请检查并更新 OPENAI_API_KEY / OPENAI_TOKEN_URL 配置，`,
+      `然后回复任意内容即可从本步骤继续执行流程。`
+    ].join('\n')
+    try {
+      const msgId = enqueueMessage({ runId, channelId, content })
+      outboxEmitter.emit('new_message', { msgId, runId })
+    } catch (notifyErr) {
+      logger.warn({ runId, notifyErr: notifyErr.message }, 'image-generate step: 暂停通知发送失败')
     }
   }
 
@@ -354,31 +468,79 @@ class ImageGenerateStep extends BaseStep {
     return finalPath
   }
 
-  async _generateImageByOpenAI(prompt, outputPath) {
-    const apiKey = config.OPENAI_API_KEY
-    if (!apiKey) throw new Error('未配置 OPENAI_API_KEY，无法生成配图')
+  async _generateImageByOpenAI(prompt, outputPath, imageNotes) {
+    const stepErrors = imageNotes ? [...imageNotes] : []
 
-    const client = new OpenAI({
-      apiKey,
-      baseURL: config.OPENAI_BASE_URL || 'https://api.openai.com/v1'
-    })
-    const response = await client.images.generate({
-      model: config.OPENAI_IMAGE_MODEL || 'gpt-image-1',
-      prompt,
-      size: config.OPENAI_IMAGE_SIZE || '1536x1024',
-      quality: config.OPENAI_IMAGE_QUALITY || 'low'
-    })
+    const attemptGenerate = async (apiKey) => {
+      if (!apiKey) throw new Error('未配置 OPENAI_API_KEY，无法生成配图')
 
-    const first = response.data && response.data[0]
-    if (!first) throw new Error('生图接口没有返回图片数据')
+      const client = new OpenAI({
+        apiKey,
+        baseURL: config.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+      })
+      let response
+      try {
+        response = await client.images.generate({
+          model: config.OPENAI_IMAGE_MODEL || 'gpt-image-1',
+          prompt,
+          size: config.OPENAI_IMAGE_SIZE || '1536x1024',
+          quality: config.OPENAI_IMAGE_QUALITY || 'low'
+        })
+      } catch (err) {
+        // OpenAI SDK 将 401 封装在 err.status 里
+        const status = err.status || err.statusCode || (err.response && err.response.status)
+        if (status === 401) {
+          const authErr = Object.assign(new Error(`生图接口认证失败(401)：${err.message}`), { isAuthFailed: true })
+          throw authErr
+        }
+        throw err
+      }
 
-    ensureDir(path.dirname(outputPath))
-    if (first.b64_json) {
-      fs.writeFileSync(outputPath, Buffer.from(first.b64_json, 'base64'))
-      return outputPath
+      const first = response.data && response.data[0]
+      if (!first) throw new Error('生图接口没有返回图片数据')
+
+      ensureDir(path.dirname(outputPath))
+      if (first.b64_json) {
+        fs.writeFileSync(outputPath, Buffer.from(first.b64_json, 'base64'))
+        return outputPath
+      }
+      if (first.url) return this._downloadImage(first.url, outputPath, 300000)
+      throw new Error('生图接口没有返回 b64_json 或 url')
     }
-    if (first.url) return this._downloadImage(first.url, outputPath, 300000)
-    throw new Error('生图接口没有返回 b64_json 或 url')
+
+    // 第一次尝试：使用当前缓存 key
+    let apiKey
+    try {
+      apiKey = await refreshOpenAIToken()
+      return await attemptGenerate(apiKey)
+    } catch (firstErr) {
+      if (!firstErr.isAuthFailed) throw firstErr
+
+      // 401：刷新 token 后重试一次
+      logger.warn({ prompt: prompt.slice(0, 60) }, '生图接口 401，尝试刷新 token 后重试')
+      // 清空缓存强制重新获取
+      openaiTokenCache.apiKey = null
+      openaiTokenCache.expireAt = 0
+
+      try {
+        apiKey = await refreshOpenAIToken()
+        return await attemptGenerate(apiKey)
+      } catch (secondErr) {
+        // 二次仍失败：将本 step 全量错误输出到日志
+        logger.error(
+          {
+            secondError: secondErr.message,
+            firstError: firstErr.message,
+            allStepErrors: stepErrors,
+            prompt: prompt.slice(0, 120)
+          },
+          'image-generate step: 生图接口二次 401 仍失败，全量错误如下'
+        )
+        // 保留 isAuthFailed 标记，让上层决定是否暂停流程
+        const finalErr = Object.assign(new Error(`生图接口认证二次失败：${secondErr.message}`), { isAuthFailed: true })
+        throw finalErr
+      }
+    }
   }
 
   _buildPhotoQueries(text, slot) {

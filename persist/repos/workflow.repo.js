@@ -69,4 +69,30 @@ function getWaitingRunByChannel(channelId) {
   `).get(channelId)
 }
 
-module.exports = { createRun, updateRunStatus, getRunById, getRecoverableRuns, getWaitingRun, getWaitingRunByChannel }
+/**
+ * 查找指定 channel 的所有等待中 workflow run（按创建时间降序）
+ */
+function getAllWaitingRunsByChannel(channelId) {
+  return getDb().prepare(`
+    SELECT wr.* FROM workflow_runs wr
+    JOIN conversations c ON c.id = wr.conversation_id
+    WHERE wr.status = 'waiting' AND c.channel_id = ?
+    ORDER BY wr.created_at DESC
+  `).all(channelId)
+}
+
+/**
+ * 将 waiting run 标记为 failed（取消）。
+ * 只允许操作 waiting 状态的 run，防止误取消正在运行的流程。
+ * @returns {boolean} 是否成功取消
+ */
+function cancelWaitingRun(runId) {
+  const run = getRunById(runId)
+  if (!run || run.status !== 'waiting') return false
+  getDb().prepare(`
+    UPDATE workflow_runs SET status = 'failed', error = '操作人手动取消', finished_at = ? WHERE id = ?
+  `).run(Date.now(), runId)
+  return true
+}
+
+module.exports = { createRun, updateRunStatus, getRunById, getRecoverableRuns, getWaitingRun, getWaitingRunByChannel, getAllWaitingRunsByChannel, cancelWaitingRun }

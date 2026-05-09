@@ -4,6 +4,14 @@
 > 定位：长期维护文档（目标 / 架构 / 接口 / 机制 / 约束 / 优化路线）
 > 原则：只保留长期有效信息，不记录一次性 bug 修复流水账。
 
+<!-- AI_MAINTENANCE_RULES
+每次更新本文档时必须遵守：
+1. 先执行 `git diff HEAD -- <changed_files>` 获取本次变更，不全量读取源文件。
+2. 用 `Read offset+limit` 只读 task.md 中需要修改的对应行段，不全量读取本文件。
+3. 用 `Edit` 精准替换，只改与本次 git diff 相关的段落，不改其他内容。
+4. 禁止"为了保险"额外读取或重写无关章节。
+-->
+
 ---
 
 ## 一、文档边界
@@ -130,6 +138,21 @@ index.js start()
 | 引擎层（兜底） | `core/engine.js` handleEvent 前 | 异步轮询后 | 覆盖 `/events/manual` 等非 webhook 来源 |
 
 **扩展方式**：新增 workflow 并在 `index.js` 注册后，拦截器自动从其 `trigger.match` 中派生匹配规则，无需改动 engine.js。时间过滤、用户白名单等扩展规则可在 `buildInterceptor` 内追加。
+
+### 3.6 webhook 消息路由优先级
+
+`/events/openclaw` 收到消息后，按以下优先级顺序处理，**每条规则命中后即返回，不再继续**：
+
+| 优先级 | 匹配条件 | 行为 | 是否转 openclaw |
+|---|---|---|---|
+| 1 | 文本匹配"查看…中断/暂停/等待" | `engine.getWaitingRuns` → outbox 发列表 | 不转 |
+| 2 | 文本匹配"取消/删除…流程" | 有 runId 或序号 → `engine.cancelRun`；无 → 发列表提示 | 不转 |
+| 3 | 文本匹配"恢复…流程" | `engine.resumeRun`（支持 run_xxx 或序号 1/2/…） | 不转 |
+| 4 | 存在 `waitType=user_input` 的 waiting run | `engine.resumeRun` 以当前文本作为 userReply | 不转 |
+| 5 | 能被任意 workflow `trigger.match` 匹配 | createEvent → event inbox | 不转 |
+| 6 | 以上均不命中 | 返回 `eventId: null` | **转给 openclaw** |
+
+**关键约束**：`waitType=operator_resume` 的流程（如生图 401 后暂停）不会被规则 4 意外唤醒，必须由操作人显式发"恢复流程"指令触发。
 
 ---
 
@@ -386,7 +409,7 @@ POST /tools/invoke
 ## 5.7 Repo Interface（持久化边界）
 
 - `event.repo`：createEvent/getPending/markProcessing/markDone/markFailed
-- `workflow.repo`：createRun/updateRunStatus/getRunById/getRecoverableRuns
+- `workflow.repo`：createRun/updateRunStatus/getRunById/getRecoverableRuns/getWaitingRunByChannel/getAllWaitingRunsByChannel/cancelWaitingRun
 - `step.repo`：createStepRun/updateStepRun/getCompletedStepRuns
 - `conversation.repo`：getOrCreateConversation/updateConversation/appendHistory
 - `outbox.repo`：enqueue/getPending/markSending/markSent/retry/failed/resetStale
@@ -413,11 +436,28 @@ POST /tools/invoke
 来自 `core/state-machine.js`：
 
 - `pending -> running | failed`
-- `running -> done | failed | retrying`
+- `running -> done | failed | retrying | waiting`
 - `retrying -> running | failed`
+- `waiting -> running | failed`
 - `done` 与 `failed` 为终态
 
 引擎在关键状态切换前使用 `assertTransition` 强校验，阻止非法转换。
+
+### waiting 状态语义
+
+step 返回 `{ _wait: true }` 时 run 进入 `waiting`，context 中额外保存：
+
+- `_waitStepIndex`：暂停时的 step 下标，恢复时从此重新执行
+- `_waitStepName`：可读 step 名称
+- `_waitType`：等待类型，决定恢复触发方式
+  - `user_input`：等待普通用户文字输入（如选主题），任意普通消息即可恢复
+  - `operator_resume`：等待操作人人工介入（如生图 401），必须发"恢复流程"指令才能恢复，普通消息不会意外触发
+- `_pauseReason`：暂停原因文本，用于中断列表展示
+
+操作人可以：
+- 发"查看中断/暂停流程"查看所有 waiting run
+- 发"恢复流程 1"或"恢复流程 run_xxx"恢复指定或最新 waiting run（序号来自列表顺序）
+- 发"取消流程 1"或"取消流程 run_xxx"将指定 waiting run 标记为 failed（不可撤销）
 
 ## 6.3 Step 执行生命周期
 
@@ -626,7 +666,7 @@ write 输出 article
 | `conditional` / `web-search` | 条件有效 | 仅当 `ragResults` 为空时触发；本次日志无法确认是否走到。 |
 | `research` | 有效 | LLM 输出研究摘要，服务后续写作。 |
 | `write` | 有效 | 生成结构化 `articleData` 与最终基础 `article`。 |
-| `image-generate` | 无实际效果 | 只生成 `coverPrompt` / `inlineImages`，不调用图片 API，且后续未消费这些字段。 |
+| `image-generate` | 已改造 | 接入真实图片生成接口（OpenAI 兼容）。含 401 自动刷 token 重试、二次失败全量日志、认证失败时暂停流程（`waitType=operator_resume`）并通过 outbox 通知操作人。支持 Openverse 免费图库兜底。 |
 | `render-article` | 当前流程中无效 | 会生成 `finalMarkdown` / `finalHtml` / `images`，但后续 `polish` 和 `publish` 均不使用。 |
 | `polish` | 有效 | LLM 润色并覆盖 `article`。 |
 | `publish` | 有效 | 写入 outbox 并发送 `article`。 |
@@ -878,7 +918,7 @@ write 输出 article
 - [ ] 修复 RAG embedding 404（百炼 endpoint/model 配置核查）
 - [ ] 确定 article_flow 最终发布形态（纯 Markdown / HTML / 公众号素材包）
 - [ ] 根据发布形态决定：删除无效 render-article 或打通 finalMarkdown/finalHtml 到 publish
-- [ ] image-generate 改名或实现真实图片生成能力
+- [ ] image-generate 已实现真实生图，待核查 OPENAI_TOKEN_URL 配置与实际接口对接
 
 ---
 

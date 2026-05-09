@@ -3,6 +3,14 @@
 > 适用版本：v1.3+
 > 文档路径：`steps/STEP_GUIDE.md`
 
+<!-- AI_MAINTENANCE_RULES
+每次更新本文档时必须遵守：
+1. 先执行 `git diff HEAD -- <changed_files>` 获取本次变更，不全量读取源文件。
+2. 用 `Read offset+limit` 只读本文件中需要修改的对应行段，不全量读取本文件。
+3. 用 `Edit` 精准替换，只改与本次 git diff 相关的段落，不改其他内容。
+4. 禁止"为了保险"额外读取或重写无关章节。
+-->
+
 ---
 
 ## 目录

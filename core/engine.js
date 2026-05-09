@@ -4,7 +4,7 @@ const WorkflowContext = require('./context')
 const { dispatchSteps } = require('./dispatcher')
 const { assertTransition } = require('./state-machine')
 const { withRetry } = require('./retry')
-const { createRun, updateRunStatus, getRecoverableRuns, getRunById, getWaitingRunByChannel } = require('../persist/repos/workflow.repo')
+const { createRun, updateRunStatus, getRecoverableRuns, getRunById, getWaitingRunByChannel, getAllWaitingRunsByChannel, cancelWaitingRun } = require('../persist/repos/workflow.repo')
 const { createStepRun, updateStepRun, getCompletedStepRuns } = require('../persist/repos/step.repo')
 const { markProcessing, markDone, markFailed } = require('../persist/repos/event.repo')
 const { updateConversation, getOrCreateConversation } = require('../persist/repos/conversation.repo')
@@ -191,11 +191,17 @@ class WorkflowEngine {
           durationMs: Date.now() - started,
           finishedAt: Date.now()
         })
-        // 标记 run 为 waiting，保存当前 step index
+        // 标记 run 为 waiting，保存当前 step index、等待类型和暂停原因
         updateRunStatus(runId, 'waiting', {
-          context: { ...context.toJSON(), _waitStepIndex: stepIndex, _waitStepName: stepName }
+          context: {
+            ...context.toJSON(),
+            _waitStepIndex: stepIndex,
+            _waitStepName: stepName,
+            _waitType: result._waitType || 'user_input',
+            _pauseReason: result.output?._pauseReason || null
+          }
         })
-        logger.info({ runId, stepName, stepIndex }, '⏸️ Workflow paused, waiting for user input')
+        logger.info({ runId, stepName, stepIndex, waitType: result._waitType || 'user_input' }, '⏸️ Workflow paused')
         return result
       }
 
@@ -332,10 +338,17 @@ class WorkflowEngine {
    *
    * @param {string} channelId - 频道 ID
    * @param {string} userInput - 用户输入的文本
+   * @param {string} [targetRunId] - 可选；指定要恢复的 runId（存在多个 waiting run 时使用）
    * @returns {string|null} - 恢复成功返回 runId，否则返回 null
    */
-  async resumeRun(channelId, userInput) {
-    const waitingRun = getWaitingRunByChannel(channelId)
+  async resumeRun(channelId, userInput, targetRunId) {
+    let waitingRun
+    if (targetRunId) {
+      const run = getRunById(targetRunId)
+      waitingRun = (run && run.status === 'waiting') ? run : null
+    } else {
+      waitingRun = getWaitingRunByChannel(channelId)
+    }
     if (!waitingRun) return null
 
     const workflow = this.workflows.find(flow => flow.id === waitingRun.workflow_id)
@@ -416,6 +429,37 @@ class WorkflowEngine {
 
       return null
     }
+  }
+
+  /**
+   * 返回指定 channel 下所有 waiting run 的摘要列表
+   * @param {string} channelId
+   * @returns {Array<{runId, workflowId, workflowName, stepName, waitType, pauseReason, createdAt}>}
+   */
+  getWaitingRuns(channelId) {
+    const runs = getAllWaitingRunsByChannel(channelId)
+    return runs.map(run => {
+      const ctx = run.context_json ? (() => { try { return JSON.parse(run.context_json) } catch (_) { return {} } })() : {}
+      const workflow = this.workflows.find(f => f.id === run.workflow_id)
+      return {
+        runId: run.id,
+        workflowId: run.workflow_id,
+        workflowName: workflow?.name || run.workflow_id,
+        stepName: ctx._waitStepName || null,
+        waitType: ctx._waitType || 'user_input',
+        pauseReason: ctx._pauseReason || null,
+        createdAt: run.created_at
+      }
+    })
+  }
+
+  /**
+   * 取消一个 waiting 状态的 run（标记为 failed）。
+   * @param {string} runId
+   * @returns {boolean} 是否成功取消
+   */
+  cancelRun(runId) {
+    return cancelWaitingRun(runId)
   }
 }
 
