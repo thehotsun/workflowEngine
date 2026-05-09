@@ -137,7 +137,37 @@ class WorkflowEngine {
 
       if (eventId) markDone(eventId)
     } catch (err) {
-      logger.error({ runId, err: err.message }, 'Workflow failed')
+      logger.error({ runId, err: err.message }, 'Workflow step failed')
+
+      // 确定 onError 策略：step 级 > workflow 级 > 默认 'fail'
+      const onError = err._stepOnError || workflow?.onError || 'fail'
+
+      if (onError === 'pause') {
+        // 暂停策略：进入 waiting 状态，保留已完成 step 的 context，等待操作者修复后恢复
+        const pausedIndex = err.stepIndex ?? context.get('_currentStepIndex') ?? 0
+        const pausedStepName = err.stepName || `step_${pausedIndex}`
+        const currentRunForPause = getRunById(runId)
+        assertTransition(currentRunForPause ? currentRunForPause.status : 'running', 'waiting')
+        updateRunStatus(runId, 'waiting', {
+          context: {
+            ...context.toJSON(),
+            _waitStepIndex: pausedIndex,
+            _waitStepName: pausedStepName,
+            _waitType: 'error',
+            _pauseReason: err.message,
+            _lastError: err.message
+          }
+        })
+        logger.info({ runId, stepIndex: pausedIndex, stepName: pausedStepName, err: err.message }, '⏸️ Workflow paused on error, waiting for operator')
+
+        // 发送暂停通知
+        await this._notifyPause({ workflow, context, runId, err, stepName: pausedStepName })
+
+        if (eventId) markDone(eventId)
+        return
+      }
+
+      // 默认 'fail' 策略：标记失败
       const failedRun = getRunById(runId)
       assertTransition(failedRun ? failedRun.status : 'running', 'failed')
       updateRunStatus(runId, 'failed', {
@@ -147,7 +177,7 @@ class WorkflowEngine {
       })
       if (eventId) markFailed(eventId, err.message)
 
-      // P1-2: 处理 onError 策略
+      // 处理 onError 策略（notify-and-dlq 等）
       if (workflow?.onError) {
         await this._handleOnError({ workflow, context, runId, err })
       }
@@ -229,6 +259,7 @@ class WorkflowEngine {
         finishedAt: Date.now()
       })
       err.stepName = stepName
+      err.stepIndex = stepIndex
       throw err
     } finally {
       // 恢复父步骤的 _currentStepIndex，避免子步骤执行时覆盖父步骤状态
@@ -300,8 +331,28 @@ class WorkflowEngine {
           context: context.toJSON()
         })
       } catch (err) {
-        const failRun = getRunById(run.id)
-        assertTransition(failRun ? failRun.status : 'running', 'failed')
+        logger.error({ runId: run.id, err: err.message }, 'Workflow recovery failed')
+
+        const onError = err._stepOnError || workflow?.onError || 'fail'
+
+        if (onError === 'pause') {
+          const pausedIndex = err.stepIndex ?? context.get('_currentStepIndex') ?? nextIndex
+          const pausedStepName = err.stepName || `step_${pausedIndex}`
+          updateRunStatus(run.id, 'waiting', {
+            context: {
+              ...context.toJSON(),
+              _waitStepIndex: pausedIndex,
+              _waitStepName: pausedStepName,
+              _waitType: 'error',
+              _pauseReason: err.message,
+              _lastError: err.message
+            }
+          })
+          logger.info({ runId: run.id, stepIndex: pausedIndex, err: err.message }, '⏸️ Recovery paused on error')
+          await this._notifyPause({ workflow, context, runId: run.id, err, stepName: pausedStepName })
+          continue
+        }
+
         updateRunStatus(run.id, 'failed', {
           finishedAt: Date.now(),
           error: err.message,
@@ -311,7 +362,12 @@ class WorkflowEngine {
     }
   }
 
+  /**
+   * 处理 onError 策略：notify-and-dlq、pause 等
+   */
   async _handleOnError({ workflow, context, runId, err }) {
+    if (workflow.onError === 'pause') return  // pause 已在 runWorkflow catch 中处理
+
     if (workflow.onError !== 'notify-and-dlq') return
 
     const channelId = context.get('channelId')
@@ -324,17 +380,42 @@ class WorkflowEngine {
   }
 
   /**
+   * 暂停通知：通过 outbox 通知操作者流程已暂停，需要介入处理
+   */
+  async _notifyPause({ workflow, context, runId, err, stepName }) {
+    const channelId = context.get('channelId')
+    if (!channelId) return
+
+    const stepInfo = stepName ? `\n失败步骤：${stepName}` : ''
+    const content = [
+      `⏸️ 工作流暂停`,
+      `流程：${workflow.name || workflow.id}`,
+      `runId：${runId}${stepInfo}`,
+      `原因：${err.message}`,
+      ``,
+      `已完成的步骤结果已保留，不会浪费 token。`,
+      `请排查问题后回复"恢复 ${runId}"继续执行。`
+    ].join('\n')
+    const msgId = enqueueMessage({ runId, channelId, content })
+    outboxEmitter.emit('new_message', { msgId, runId })
+  }
+
+  /**
    * 恢复等待中的 workflow run。
    *
    * 交互式步骤返回 { _wait: true } 后，run 会进入 waiting 状态，并在 context 中记录：
    * - _waitStepIndex：暂停的步骤下标
    * - _waitStepName：暂停的步骤名称
+   * - _waitType：'user_input' | 'error'
    *
    * 用户再次发送消息时，webhook 会调用本方法：
    * 1. 找到当前 channel 下最近一个 waiting run
    * 2. 将用户消息注入 context.userReply
    * 3. 从 _waitStepIndex 对应的步骤本身重新执行，而不是从下一步开始
    * 4. 等待步骤读取 userReply 后产出正式 output，后续步骤再继续执行
+   *
+   * 对于 error 类型的暂停：操作者排查修复问题后恢复，从失败步骤重新执行，
+   * 之前已完成的步骤不会重跑，避免浪费 token。
    *
    * @param {string} channelId - 频道 ID
    * @param {string} userInput - 用户输入的文本
@@ -361,11 +442,20 @@ class WorkflowEngine {
     const contextData = waitingRun.context_json ? JSON.parse(waitingRun.context_json) : {}
     const workflowConfig = normalizeWorkflowConfig(workflow?.config)
     const context = new WorkflowContext({ ...contextData, _runId: waitingRun.id, _config: workflowConfig })
+    const waitType = contextData._waitType || 'user_input'
 
-    // 注入用户回复；保留原始 input（用户最初的写作需求），只新增 userReply
-    context.set('userReply', userInput)
+    // 注入用户回复/操作者备注
+    if (waitType === 'error') {
+      // error 恢复：保留原始 input，用 resumeNote 记录操作者的修复备注
+      context.set('resumeNote', userInput || '操作者手动恢复')
+      // 清除上次错误标记，避免 step 误判
+      context.delete('_lastError')
+    } else {
+      // user_input 恢复：注入用户回复，保留原始 input
+      context.set('userReply', userInput)
+    }
 
-    // 从等待的步骤本身重新执行，让该步骤读取 userReply 完成选择后继续
+    // 从等待的步骤本身重新执行，让该步骤读取 userReply/resumeNote 完成选择后继续
     const waitStepIndex = contextData._waitStepIndex ?? 0
     const resumeIndex = waitStepIndex
 
@@ -376,7 +466,8 @@ class WorkflowEngine {
       userId: context.get('userId')
     })
 
-    logger.info({ runId: waitingRun.id, channelId, resumeIndex, userInput: String(userInput || '').slice(0, 50) }, '▶️ Resuming workflow from wait step')
+    const resumeLabel = waitType === 'error' ? 'error-resume' : 'user-resume'
+    logger.info({ runId: waitingRun.id, channelId, resumeIndex, waitType, userInput: String(userInput || '').slice(0, 50) }, `▶️ Resuming workflow (${resumeLabel})`)
 
     updateRunStatus(waitingRun.id, 'running', { context: context.toJSON() })
 
@@ -417,13 +508,37 @@ class WorkflowEngine {
       return waitingRun.id
     } catch (err) {
       logger.error({ runId: waitingRun.id, err: err.message }, 'Workflow resume failed')
+
+      // 恢复执行时如果又失败了，按 onError 策略处理
+      const onError = err._stepOnError || workflow?.onError || 'fail'
+
+      if (onError === 'pause') {
+        // 再次暂停，等待操作者继续修复
+        const pausedIndex = err.stepIndex ?? context.get('_currentStepIndex') ?? resumeIndex
+        const pausedStepName = err.stepName || `step_${pausedIndex}`
+        updateRunStatus(waitingRun.id, 'waiting', {
+          context: {
+            ...context.toJSON(),
+            _waitStepIndex: pausedIndex,
+            _waitStepName: pausedStepName,
+            _waitType: 'error',
+            _pauseReason: err.message,
+            _lastError: err.message
+          }
+        })
+        logger.info({ runId: waitingRun.id, stepIndex: pausedIndex, err: err.message }, '⏸️ Workflow re-paused after resume failure')
+        await this._notifyPause({ workflow, context, runId: waitingRun.id, err, stepName: pausedStepName })
+        return waitingRun.id
+      }
+
+      // 默认：标记失败
       updateRunStatus(waitingRun.id, 'failed', {
         finishedAt: Date.now(),
         error: err.message,
         context: context.toJSON()
       })
 
-      if (workflow?.onError) {
+      if (workflow?.onError && workflow.onError !== 'pause') {
         await this._handleOnError({ workflow, context, runId: waitingRun.id, err })
       }
 
@@ -448,6 +563,7 @@ class WorkflowEngine {
         stepName: ctx._waitStepName || null,
         waitType: ctx._waitType || 'user_input',
         pauseReason: ctx._pauseReason || null,
+        lastError: ctx._lastError || null,
         createdAt: run.created_at
       }
     })
