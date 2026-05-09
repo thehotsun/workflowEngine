@@ -23,7 +23,10 @@ module.exports = {
 
   FREE_PHOTO_ENABLED: process.env.FREE_PHOTO_ENABLED,
   OPENVERSE_API_BASE: process.env.OPENVERSE_API_BASE || 'https://api.openverse.org/v1',
+  OPENVERSE_CLIENT_ID: process.env.OPENVERSE_CLIENT_ID || '',
+  OPENVERSE_CLIENT_SECRET: process.env.OPENVERSE_CLIENT_SECRET || '',
   OPENVERSE_ACCESS_TOKEN: process.env.OPENVERSE_ACCESS_TOKEN || '',
+  OPENVERSE_TOKEN_CACHE_PATH: process.env.OPENVERSE_TOKEN_CACHE_PATH || path.join('data', 'openverse_token_cache.json'),
   FREE_PHOTO_TIMEOUT: Number(process.env.FREE_PHOTO_TIMEOUT || 60000),
   IMAGE_ASSET_DIR: process.env.IMAGE_ASSET_DIR || path.join('data', 'article-assets'),
 

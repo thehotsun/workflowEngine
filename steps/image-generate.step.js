@@ -46,10 +46,41 @@ const logger = require('../utils/logger')
 const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('../trigger/outbox-worker')
 
-const openverseInitialToken = String(config.OPENVERSE_ACCESS_TOKEN || '').trim()
 const openverseTokenCache = {
-  accessToken: openverseInitialToken,
-  expireAt: openverseInitialToken ? Date.now() + 12 * 60 * 60 * 1000 - 60000 : 0
+  accessToken: '',
+  expireAt: 0
+}
+
+function _openverseTokenCachePath() {
+  return path.resolve(process.cwd(), config.OPENVERSE_TOKEN_CACHE_PATH || path.join('data', 'openverse_token_cache.json'))
+}
+
+function _loadOpenverseTokenFromFile() {
+  try {
+    const raw = fs.readFileSync(_openverseTokenCachePath(), 'utf8')
+    const cached = JSON.parse(raw)
+    if (cached.access_token && Number(cached.expires_at || 0) > Date.now() + 60000) {
+      openverseTokenCache.accessToken = String(cached.access_token)
+      openverseTokenCache.expireAt = Number(cached.expires_at)
+    }
+  } catch (_) {}
+}
+
+function _saveOpenverseTokenToFile(accessToken, expireAt) {
+  try {
+    const cachePath = _openverseTokenCachePath()
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true })
+    fs.writeFileSync(cachePath, JSON.stringify({ access_token: accessToken, expires_at: expireAt }), 'utf8')
+  } catch (_) {}
+}
+
+// 优先使用 .env 手动注入的 token，否则从文件缓存恢复
+const _manualToken = String(config.OPENVERSE_ACCESS_TOKEN || '').trim()
+if (_manualToken) {
+  openverseTokenCache.accessToken = _manualToken
+  openverseTokenCache.expireAt = Date.now() + 12 * 60 * 60 * 1000 - 60000
+} else {
+  _loadOpenverseTokenFromFile()
 }
 
 // OpenAI 动态 token 缓存（仅在配置了 OPENAI_TOKEN_URL 时生效）
@@ -118,8 +149,10 @@ async function getOpenverseToken(apiBase, timeout) {
   const data = await res.json()
   if (!data.access_token) throw new Error('Openverse token response missing access_token')
 
+  const expireAt = now + Number(data.expires_in || 43200) * 1000 - 60000
   openverseTokenCache.accessToken = data.access_token
-  openverseTokenCache.expireAt = now + Number(data.expires_in || 43200) * 1000 - 60000
+  openverseTokenCache.expireAt = expireAt
+  _saveOpenverseTokenToFile(data.access_token, expireAt)
   return openverseTokenCache.accessToken
 }
 
