@@ -46,6 +46,8 @@ const logger = require('../utils/logger')
 const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('../trigger/outbox-worker')
 
+// 暂时注释 access_token 相关内容，使用匿名模式
+/*
 const openverseTokenCache = {
   accessToken: '',
   expireAt: 0
@@ -82,6 +84,7 @@ if (_manualToken) {
 } else {
   _loadOpenverseTokenFromFile()
 }
+*/
 
 // OpenAI 动态 token 缓存（仅在配置了 OPENAI_TOKEN_URL 时生效）
 const openaiTokenCache = {
@@ -119,6 +122,8 @@ async function refreshOpenAIToken() {
   return newKey
 }
 
+// 暂时注释 access_token 获取函数，使用匿名模式
+/*
 async function getOpenverseToken(apiBase, timeout) {
   const now = Date.now()
   if (openverseTokenCache.accessToken && now < openverseTokenCache.expireAt) {
@@ -135,14 +140,14 @@ async function getOpenverseToken(apiBase, timeout) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'User-Agent': 'workflow-engine/1.0'
+      'User-Agent': 'workflow-engine/1.0',
     },
     body: JSON.stringify({
       grant_type: 'client_credentials',
       client_id: clientId,
-      client_secret: clientSecret
+      client_secret: clientSecret,
     }),
-    signal: AbortSignal.timeout(timeout)
+    signal: AbortSignal.timeout(timeout),
   })
   if (!res.ok) throw new Error(`Openverse token failed: ${res.status}`)
 
@@ -155,6 +160,7 @@ async function getOpenverseToken(apiBase, timeout) {
   _saveOpenverseTokenToFile(data.access_token, expireAt)
   return openverseTokenCache.accessToken
 }
+*/
 
 function isEnabled(value, defaultValue = true) {
   if (value === undefined || value === null || value === '') return defaultValue
@@ -389,7 +395,7 @@ class ImageGenerateStep extends BaseStep {
     return {
       enabled: isEnabled(config.FREE_PHOTO_ENABLED, true),
       apiBase,
-      accessToken: await getOpenverseToken(apiBase, timeout),
+      accessToken: '',  // 匿名模式，不使用 access_token
       timeout
     }
   }
