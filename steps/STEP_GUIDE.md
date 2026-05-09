@@ -106,7 +106,7 @@ Engine 在调用 `execute()` 之前，会合并三处来源的 `requires` 声明
 
 但是：**必须保证你在 `execute()` 里真的写入了这些 key**，否则下游 Step 的 `requires` 校验会失败。
 
-### 3.3 Context 初始内置 key
+### 3.3 Context 内置 key
 
 Engine 启动时会将以下 key 注入 context，所有 Step 均可直接使用：
 
@@ -120,6 +120,19 @@ Engine 启动时会将以下 key 注入 context，所有 Step 均可直接使用
 | `_runId` | `number` | 当前 workflow run 的数据库 ID |
 | `_config` | `object` | 当前 workflow 的配置对象（来自 `workflow.config`，未配置时为 `{}`） |
 | `conversation` | `object` | 会话记录（来自 DB） |
+
+以下 key 在特定场景下由引擎注入，Step 可按需读取：
+
+| key | 类型 | 注入场景 | 说明 |
+|---|---|---|---|
+| `userReply` | `string` | `resumeRun`（`_waitType='user_input'`） | 用户对交互式 step 的回复 |
+| `resumeNote` | `string` | `resumeRun`（`_waitType='error'`） | 操作者恢复暂停流程时的备注 |
+| `_waitType` | `string` | 流程进入 waiting 状态时 | `'user_input'`（用户交互等待）或 `'error'`（错误暂停） |
+| `_waitStepIndex` | `number` | 流程进入 waiting 状态时 | 暂停时所在的步骤下标 |
+| `_waitStepName` | `string` | 流程进入 waiting 状态时 | 暂停时的步骤名称 |
+| `_pauseReason` | `string` | 流程进入 waiting 状态时 | 暂停原因（用户提示或错误消息） |
+| `_lastError` | `string` | `_waitType='error'` 时 | 上次失败的完整错误消息 |
+| `_currentStepIndex` | `number` | 运行时 | 当前正在执行的 step 下标 |
 
 `_` 前缀的 key 为引擎内部使用，Step 可读取但不应修改。
 
@@ -146,6 +159,33 @@ Engine.runStep()
   └─ 恢复父步骤的 _currentStepIndex
 ```
 
+### 4.1 错误暂停与恢复流程
+
+当 step 抛出异常时，引擎根据 `onError` 策略决定后续行为：
+
+```
+dispatchSteps() 循环
+  │
+  ├─ step N 执行成功 → context 写入 output → 继续 N+1
+  │
+  ├─ step N 返回 { _wait: true } → run 进入 waiting(_waitType='user_input')
+  │    └─ 用户回复后 → resumeRun() → 从 step N 重新执行
+  │
+  └─ step N 抛出异常
+       ├─ onError='skip'  → 记录日志，继续 step N+1（跳过失败步骤）
+       ├─ onError='pause' → run 进入 waiting(_waitType='error')
+       │    ├─ 保留所有已完成 step 的 context 数据（不丢失 token）
+       │    ├─ 通过 outbox 通知操作者（含 runId、失败步骤、错误原因）
+       │    └─ 操作者回复"恢复流程"后 → resumeRun() → 从 step N 重新执行
+       └─ onError='fail'（默认）→ run 进入 failed 终态
+```
+
+**关键规则：**
+- `onError` 优先级：`stepDef.onError` > `workflow.onError` > 默认 `'fail'`
+- `pause` 策略下，已完成步骤的输出全部保留在 context 中，恢复时不会重跑
+- 恢复执行再次失败时，若 `onError='pause'`，会再次暂停而非终态失败
+- 操作者可随时通过"查看中断流程"查看所有 waiting run（含 `user_input` 和 `error` 两种类型）
+
 **Step 内部不需要处理重试逻辑**，只需要在出错时 `throw Error`，引擎统一处理。
 
 ---
@@ -169,7 +209,7 @@ Engine.runStep()
 
 ---
 
-## 6. 重试与超时规则
+## 6. 重试、超时与错误策略
 
 ### 重试
 
@@ -189,6 +229,36 @@ Engine.runStep()
 优先级：`stepDef.timeout` > `step.timeout` > 默认 30000ms
 
 超时后抛出 `Error: Step timeout after Nms`，触发正常重试逻辑。
+
+### 错误策略（onError）
+
+当 step 重试耗尽仍失败后，引擎按 `onError` 策略决定 run 的最终去向：
+
+| 策略 | 行为 | 适用场景 |
+|---|---|---|
+| `'fail'`（默认） | run 进入 `failed` 终态，已完成的 step 输出丢失 | 轻量流程、调试阶段 |
+| `'pause'` | run 进入 `waiting`（`_waitType='error'`），保留所有已完成 step 的 context，通知操作者介入，恢复后从失败 step 原位继续 | **高 token/耗时流程（推荐）** |
+| `'skip'` | 记录错误日志，跳过失败 step，继续执行下一步 | 非关键步骤（如可选的数据抓取） |
+
+**配置位置：**
+
+```js
+// workflow 级别（影响所有 step）
+module.exports = {
+  onError: 'pause',  // 'fail' | 'pause' | 'notify-and-dlq'（兼容旧版）
+  steps: [...]
+}
+
+// step 级别（覆盖 workflow 级别）
+steps: [
+  { type: 'image-generate', onError: 'pause', maxRetries: 1 },
+  { type: 'fetch-hotspots',  onError: 'skip' },   // 非关键，失败跳过
+]
+```
+
+**优先级：** `stepDef.onError` > `workflow.onError` > 默认 `'fail'`
+
+**`pause` 策略的核心价值：** 高 token 步骤（如 `generate-topics`、`write`、`polish`）一旦成功，其输出永久保留在 context 中。后续步骤失败时不会丢失这些结果，避免重复消耗 token。
 
 ---
 
@@ -295,29 +365,9 @@ Builder 函数的第二个参数 `deps` 包含：
 | `flow-control` | 流程结构控制（分支 / 并行 / 变换） |
 | `output` | 消息出站与发布 |
 
-### 各 Step 一句话功能
+### 各Step功能
 
-| type | category | description |
-|---|---|---|
-| `fetch-hotspots` | data-fetch | 实时抓取微博/头条/百度热搜，失败自动降级为样本数据 |
-| `generate-topics` | content-creation | 基于热点和用户需求，用 LLM 生成多个候选话题（含标题、简介、角度、评分） |
-| `select-topic` | content-creation | 从候选话题中选择一个（支持用户显式选择、模型选择和评分回退） |
-| `topic` | content-creation | 从用户输入中提炼清晰写作主题，作为后续检索与写作的上游输入（LLM） |
-| `research` | content-creation | 围绕已选话题做写作前研究，输出角度、事实点、大纲、风险提示等（LLM） |
-| `write` | content-creation | 根据选题与研究结果生成完整结构化文章（标题、摘要、分节、配图提示词等） |
-| `image-generate` | content-creation | 根据选定话题自动匹配场景，生成封面图和文章内插图提示词 |
-| `render-article` | content-creation | 将结构化文章数据渲染为发布用 HTML 与 Markdown，并提取图片位信息 |
-| `hotspot` | content-creation | 从搜索结果或知识库中提炼热点话题与传播角度（LLM） |
-| `polish` | content-creation | 对已有文章进行润色：保持原意，提升可读性与段落结构（LLM） |
-| `rag-query` | retrieval | 对本地知识库进行向量检索，返回与 topic 相关的文档片段 |
-| `skill-proxy` | integration | 代理调用 OpenClaw Skill 生态能力，避免为每个外部能力单独实现 step |
-| `publish` | output | 将文章写入 outbox 发布队列并触发即时发送 |
-| `conditional` | flow-control | 条件分支：根据 context 动态选择执行 ifTrue 或 ifFalse 子步骤 |
-| `parallel` | flow-control | 并行执行多个子步骤，等待全部完成后汇总结果 |
-| `transform` | flow-control | 执行轻量数据转换函数 stepDef.run(context) |
-| `noop` | flow-control | 空操作占位，直接返回，不修改 context |
-
----
+转到9. 现有 Step 速查表
 
 ## 11. Context 数据流示例
 
@@ -419,6 +469,12 @@ const STEP_REGISTRY = {
 
   // 可选：覆盖 step.timeout（ms）
   timeout: 10_000,
+
+  // 可选：错误策略，覆盖 workflow 级 onError
+  // 'fail': 标记 run 为 failed（默认）
+  // 'pause': 进入 waiting 状态，保留 context，等待操作者恢复（推荐高 token 流程）
+  // 'skip': 记录错误后跳过，继续下一步（适合非关键步骤）
+  onError: 'pause',
 
   // 以下为特定 step 的专属参数（step 内通过 stepDef 访问）
   topK: 5,          // rag-query 用
@@ -584,27 +640,6 @@ class WriteStep extends BaseStep { ... }
 
 ---
 
-### 错误 3：output 写入 context 后下游读不到
-
-**原因：** execute() 返回的是数组，但未在 stepDef 配置 `output` key。
-**解决：** 在 workflow 的 stepDef 加上 `output: 'targetKey'`。
-
----
-
-### 错误 4：子 Step 被 `recoverRuns()` 误当顶层 step
-
-**原因：** 自定义容器型 step 使用了正数 stepIndex。
-**解决：** 子 step 的 index 必须是负数（参见第 7 节公式）。
-
----
-
-### 错误 5：`Step type "xxx" is already registered`
-
-**原因：** 重复调用 `registerStep()` 注册同一 type。
-**解决：** 只注册一次，或检查模块是否被多次加载。
-
----
-
 ## 17. AI 编排规则与 Step 完整清单
 
 > **本节设计目标**：AI 读完本文件后可直接生成可执行 workflow，用户无需额外提供 prompt 或 catalog。
@@ -634,256 +669,9 @@ class WriteStep extends BaseStep { ... }
    | `event` | object | 完整事件对象 |
    | `conversation` | object | 会话记录（来自 DB） |
 
-### 17.2 Step Catalog（当前全量，与代码同步）
 
-> 新增 step 后执行 `node scripts/update-step-guide.js` 更新此 JSON。
-> JSON 字段含义：`type` 注册名 / `description` 能力说明 / `category` 分类 / `requires` 前置 context key / `provides` 执行后写入的 key / `retryable` 是否重试 / `timeout` 默认超时(ms)。
 
-<!-- CATALOG_JSON_START -->
-```json
-[
-  {
-    "type": "parallel",
-    "description": "并行执行多个子步骤，等待全部完成后汇总结果；子步骤使用独立 context 快照防并发冲突",
-    "category": "flow-control",
-    "requires": [],
-    "provides": [],
-    "retryable": false,
-    "timeout": 30000
-  },
-  {
-    "type": "conditional",
-    "description": "条件分支：根据 context 动态选择执行 ifTrue 或 ifFalse 子步骤",
-    "category": "flow-control",
-    "requires": [],
-    "provides": [],
-    "retryable": false,
-    "timeout": 30000
-  },
-  {
-    "type": "transform",
-    "description": "执行轻量数据转换函数 stepDef.run(context)，用于拼装或改写上下文数据",
-    "category": "flow-control",
-    "requires": [],
-    "provides": [],
-    "retryable": false,
-    "timeout": 30000
-  },
-  {
-    "type": "noop",
-    "description": "空操作占位，直接返回，不修改 context；用于流程测试或临时跳过某步骤",
-    "category": "flow-control",
-    "requires": [],
-    "provides": [],
-    "retryable": false,
-    "timeout": 30000
-  },
-  {
-    "type": "skill-proxy",
-    "description": "代理调用 OpenClaw Skill 生态能力，避免为每个外部能力单独实现 step",
-    "category": "integration",
-    "requires": [],
-    "provides": [],
-    "retryable": true,
-    "timeout": 20000
-  },
-  {
-    "type": "rag-query",
-    "description": "对本地知识库进行向量检索，返回与 topic 相关的文档片段（向量召回 + BM25 重排）",
-    "category": "retrieval",
-    "requires": [],
-    "provides": [
-      "ragResults"
-    ],
-    "retryable": true,
-    "timeout": 20000
-  },
-  {
-    "type": "topic",
-    "description": "从用户输入中提炼清晰写作主题，作为后续检索与写作的上游输入（LLM）",
-    "category": "content-creation",
-    "requires": [
-      "input"
-    ],
-    "provides": [
-      "topic"
-    ],
-    "retryable": true,
-    "timeout": 20000
-  },
-  {
-    "type": "hotspot",
-    "description": "从搜索结果或知识库中提炼热点话题与传播角度（LLM），已有实时热点时请用 fetch-hotspots 代替",
-    "category": "content-creation",
-    "requires": [],
-    "provides": [
-      "hotspot",
-      "hotspotSuggestions"
-    ],
-    "retryable": true,
-    "timeout": 30000
-  },
-  {
-    "type": "write",
-    "description": "根据选题与研究结果生成完整结构化文章（标题、摘要、分节、配图提示词等）",
-    "category": "content-creation",
-    "requires": [
-      "selectedTopic",
-      "research"
-    ],
-    "provides": [
-      "article",
-      "articleData",
-      "articleJson"
-    ],
-    "retryable": true,
-    "timeout": 60000
-  },
-  {
-    "type": "polish",
-    "description": "对已有文章进行润色：保持原意，提升可读性与段落结构（LLM）",
-    "category": "content-creation",
-    "requires": [
-      "article"
-    ],
-    "provides": [
-      "article"
-    ],
-    "retryable": true,
-    "timeout": 60000
-  },
-  {
-    "type": "publish",
-    "description": "将文章写入 outbox 发布队列并触发即时发送，实际出站由 outbox worker 异步处理",
-    "category": "output",
-    "requires": [
-      "article",
-      "channelId",
-      "_runId"
-    ],
-    "provides": [],
-    "retryable": true,
-    "timeout": 10000
-  },
-  {
-    "type": "generate-topics",
-    "description": "基于热点和用户需求，用 LLM 生成多个候选话题（含标题、简介、角度、评分）",
-    "category": "content-creation",
-    "requires": [
-      "input",
-      "hotspots"
-    ],
-    "provides": [
-      "topics",
-      "styleBrief",
-      "topicCandidates"
-    ],
-    "retryable": true,
-    "timeout": 40000
-  },
-  {
-    "type": "select-topic",
-    "description": "发送候选话题给用户，等待用户选择后继续",
-    "category": "content-creation",
-    "requires": [
-      "topics",
-      "input"
-    ],
-    "provides": [
-      "selectedTopic",
-      "topic"
-    ],
-    "retryable": true,
-    "timeout": 30000
-  },
-  {
-    "type": "research",
-    "description": "围绕已选话题做写作前研究，输出角度、事实点、大纲、风险提示等结构化结果（LLM）",
-    "category": "content-creation",
-    "requires": [
-      "selectedTopic"
-    ],
-    "provides": [
-      "research"
-    ],
-    "retryable": true,
-    "timeout": 40000
-  },
-  {
-    "type": "image-generate",
-    "description": "根据选定话题生成封面图和文章内插图，并调用图片 API 产出可发布图片",
-    "category": "content-creation",
-    "requires": [
-      "selectedTopic"
-    ],
-    "provides": [
-      "coverPrompt",
-      "inlineImages",
-      "coverImagePath",
-      "inlineImagePaths",
-      "imageNotes",
-      "photoSources"
-    ],
-    "retryable": true,
-    "timeout": 300000
-  },
-  {
-    "type": "fetch-hotspots",
-    "description": "实时抓取微博/头条/百度热搜，输出标准化热点列表（真实 API，失败自动降级为样本数据）",
-    "category": "data-fetch",
-    "requires": [],
-    "provides": [
-      "hotspots"
-    ],
-    "retryable": true,
-    "timeout": 30000
-  },
-  {
-    "type": "render-article",
-    "description": "将结构化文章数据渲染为发布用 HTML 与 Markdown，并插入已生成图片",
-    "category": "content-creation",
-    "requires": [
-      "articleData"
-    ],
-    "provides": [
-      "finalMarkdown",
-      "finalHtml",
-      "images",
-      "coverImagePath",
-      "inlineImagePaths"
-    ],
-    "retryable": true,
-    "timeout": 30000
-  },
-  {
-    "type": "platform-publish",
-    "description": "将文章提交到发布平台草稿箱，当前支持微信公众号并预留多平台扩展",
-    "category": "output",
-    "requires": [
-      "articleData",
-      "finalHtml"
-    ],
-    "provides": [
-      "platformPublishResults",
-      "wechatDraftMediaId"
-    ],
-    "retryable": true,
-    "timeout": 180000
-  },
-  {
-    "type": "web-search",
-    "description": "调用 OpenClaw web-search 搜索最新资讯",
-    "category": "integration",
-    "requires": [],
-    "provides": [],
-    "retryable": true,
-    "timeout": 20000
-  }
-]
-```
-<!-- CATALOG_JSON_END -->
-
-### 17.3 新增 Step 实施规范（当 catalog 无可用能力时）
+### 17.2 新增 Step 实施规范（当 catalog 无可用能力时）
 
 当需求无法由现有 catalog 覆盖时，AI 必须先补齐能力，再做流程编排。最小动作清单如下：
 
@@ -896,7 +684,7 @@ class WriteStep extends BaseStep { ... }
 
 > 禁止“先引用不存在 type，后补实现”的倒序编排。
 
-### 17.4 生成 workflow 的输出格式
+### 17.3 生成 workflow 的输出格式
 
 AI 根据用户需求生成 workflow 时，必须返回以下三段：
 
@@ -942,7 +730,7 @@ publish requires: [article, channelId, _runId]
 - publish 依赖 channelId，若事件来源没有 channelId 则流程失败
 ```
 
-### 17.5 最小检查清单
+### 17.4 最小检查清单
 
 生成或人工编写 workflow 后，必须逐条确认：
 
@@ -954,7 +742,9 @@ publish requires: [article, channelId, _runId]
 - [ ] 涉及 `_config` 的读取已在 workflow 端注释消费方，在 step 端声明 `@workflow-config`。
 - [ ] 若本次引入了新 step：`steps/index.js` 已注册，`update-step-guide.js` 已执行，catalog 已更新。
 - [ ] **配置归属规则（§14）已遵守**：纯功能配置只放 `.env`，账号/品牌配置才允许 workflow 覆盖；workflow 文件中不出现纯功能配置字段。
+- [ ] **onError 策略已合理配置**：高 token/耗时流程设置 `onError: 'pause'`，避免失败时丢失已完成步骤的结果；非关键步骤可设 `onError: 'skip'`。
+- [ ] **step 级 onError 覆盖明确**：若某一步骤需要不同于 workflow 全局的错误策略，已在 stepDef 中显式配置 `onError`。
 
 ---
 
-*文档最后更新：2026-05-08*
+*文档最后更新：2026-05-09（commit 321d1f4 — feat: 流程失败后更改为wait状态）*
