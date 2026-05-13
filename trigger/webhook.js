@@ -6,20 +6,19 @@ const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('./outbox-worker')
 const logger = require('../utils/logger')
 
-// 模糊匹配"恢复流程"：恢复 和 流程 两个词都出现即命中（无需相邻）
-const RESUME_RE = /恢复[\s\S]{0,10}流程|流程[\s\S]{0,10}恢复/
+// ── 英文命令（. 或 / 前缀均可；. 在九宫格主键盘无需切换）───────
+const CMD_HELP_RE       = /^[/.]help$/i
+const CMD_LIST_RE       = /^[/.]list$/i
+const CMD_CANCEL_ALL_RE = /^[/.]cancel\s+all$/i
+const CMD_CANCEL_RE     = /^[/.]cancel(\s|$)/i     // .cancel .cancel 1 .cancel run_xxx
+const CMD_RESUME_RE     = /^[/.]resume/i           // .resume .resume 1 .resume run_xxx
 
-// 模糊匹配"查看中断/暂停流程" — 也支持单独的 "查看" "流程"
-const LIST_PAUSED_RE = /查看[\s\S]{0,8}(中断|暂停|等待)|(中断|暂停|等待)[\s\S]{0,8}流程|^查看$|^流程$/
-
-// 模糊匹配"取消/删除流程" — 放宽：支持 "取消1" "取消全部" "取消流程" 等
-const CANCEL_RE = /(取消|删除)[\s\S]{0,10}流程|流程[\s\S]{0,10}(取消|删除)|^(取消|删除)[\s\S]{0,5}$/
-
-// 匹配"取消全部"
-const CANCEL_ALL_RE = /(取消|删除)[\s\S]{0,10}全部|全部[\s\S]{0,10}(取消|删除)/
-
-// 匹配"帮助"
-const HELP_RE = /^(帮助|help|\?|？)$/i
+// ── 中文命令（收紧匹配，减少误触）─────────────────────────────────
+const HELP_RE          = /^(帮助|help)$/i
+const LIST_PAUSED_RE   = /^查看\s*(中断|暂停|等待|流程)/i
+const RESUME_RE        = /^恢复(\s*(流程|[1-9]\d*|run_[a-z0-9]+))?$/i
+const CANCEL_RE        = /^(取消|删除)(\s*(流程|[1-9]\d*|run_[a-z0-9]+))?$/i
+const CANCEL_ALL_RE    = /^(取消|删除)\s*(全部|所有|all)/i
 
 /**
  * 从文本中解析操作人指定的 runId
@@ -57,7 +56,7 @@ function sendPausedList(channelId, runs, enqueue) {
     const reason = r.pauseReason ? `\n   原因：${r.pauseReason}` : ''
     lines.push(`${i + 1}. [${r.workflowName}] 卡在步骤「${r.stepName || '?'}」 (${ts})${reason}\n   runId：${r.runId}`)
   })
-  lines.push('\n回复「恢复 1」恢复，「取消 1」取消，「取消全部」清空，「帮助」查看命令。')
+  lines.push('\n回复 .resume 1 恢复，.cancel 1 取消，.cancel all 清空，.help 查看命令。')
   const content = lines.join('\n')
   const msgId = enqueue({ runId: null, channelId, content })
   outboxEmitter.emit('new_message', { msgId, runId: null })
@@ -84,32 +83,35 @@ async function eventsRoutes(fastify, opts) {
     const text = event.text || ''
     const channelId = event.channelId
 
-    // ── 0. 操作人指令：帮助 ────────────────────────────────────────
-    if (text && HELP_RE.test(text)) {
+    // ── 0. 操作人指令：帮助（.help / 帮助）─────────────────────────
+    if (text && (HELP_RE.test(text) || CMD_HELP_RE.test(text))) {
       logger.info({ channelId }, '📖 帮助指令')
       const helpContent = [
-        '📖 可用命令：',
-        '• 查看 / 流程 — 列出暂停的流程',
-        '• 取消 1 — 取消指定流程（数字对应列表序号）',
-        '• 取消全部 — 取消所有暂停的流程',
-        '• 恢复 1 — 恢复指定流程',
-        '• 帮助 — 显示此列表',
+        '📖 可用命令（. 和 / 等效，九宫格推荐用 .）',
+        '',
+        '  .list        查看暂停的流程',
+        '  .resume 1    恢复第 1 个流程',
+        '  .cancel 1    取消第 1 个流程',
+        '  .cancel all  取消全部暂停的流程',
+        '  .help        显示此帮助',
+        '',
+        '中文命令：恢复 1 | 取消 1 | 取消全部 | 查看流程 | 帮助',
       ].join('\n')
       const msgId = enqueueMessage({ runId: null, channelId, content: helpContent })
       outboxEmitter.emit('new_message', { msgId, runId: null })
       return reply.code(200).send({ ok: true, eventId: null, handled: 'help' })
     }
 
-    // ── 1. 操作人指令：查看中断流程 ─────────────────────────────────
-    if (text && LIST_PAUSED_RE.test(text)) {
+    // ── 1. 操作人指令：查看中断流程（.list / 查看流程）────────────
+    if (text && (LIST_PAUSED_RE.test(text) || CMD_LIST_RE.test(text))) {
       logger.info({ channelId, text: text.slice(0, 50) }, '📋 查看中断流程指令')
       const runs = engine.getWaitingRuns(channelId)
       sendPausedList(channelId, runs, enqueueMessage)
       return reply.code(200).send({ ok: true, eventId: null, handled: 'list_paused' })
     }
 
-    // ── 1.5. 操作人指令：取消全部 ─────────────────────────────────
-    if (text && CANCEL_ALL_RE.test(text)) {
+    // ── 1.5. 操作人指令：取消全部（.cancel all / 取消全部）────────
+    if (text && (CANCEL_ALL_RE.test(text) || CMD_CANCEL_ALL_RE.test(text))) {
       logger.info({ channelId, text: text.slice(0, 50) }, '🗑️ 取消全部流程指令')
       const runs = engine.getWaitingRuns(channelId)
       if (!runs.length) {
@@ -128,8 +130,8 @@ async function eventsRoutes(fastify, opts) {
       return reply.code(200).send({ ok: true, eventId: null, handled: 'cancel_all' })
     }
 
-    // ── 2. 操作人指令：取消/删除中断流程 ───────────────────────────
-    if (text && CANCEL_RE.test(text)) {
+    // ── 2. 操作人指令：取消/删除中断流程（.cancel / 取消）─────────
+    if (text && (CANCEL_RE.test(text) || CMD_CANCEL_RE.test(text))) {
       logger.info({ channelId, text: text.slice(0, 50) }, '🗑️ 取消流程指令')
       const runs = engine.getWaitingRuns(channelId)
       const targetRunId = resolveTargetRun(text, runs)
@@ -149,14 +151,14 @@ async function eventsRoutes(fastify, opts) {
         outboxEmitter.emit('new_message', { msgId, runId: null })
       } else {
         sendPausedList(channelId, runs, enqueueMessage)
-        const hint = enqueueMessage({ runId: null, channelId, content: '请回复「取消 1」或「取消 run_xxx」指定要取消的流程。' })
+        const hint = enqueueMessage({ runId: null, channelId, content: '请回复 .cancel 1 或 .cancel run_xxx 指定要取消的流程。' })
         outboxEmitter.emit('new_message', { msgId: hint, runId: null })
       }
       return reply.code(200).send({ ok: true, eventId: null, handled: 'cancel_needs_runid' })
     }
 
-    // ── 3. 操作人指令：恢复指定（或最新）中断流程 ──────────────────
-    if (text && RESUME_RE.test(text)) {
+    // ── 3. 操作人指令：恢复指定（或最新）中断流程（.resume / 恢复）─
+    if (text && (RESUME_RE.test(text) || CMD_RESUME_RE.test(text))) {
       logger.info({ channelId, text: text.slice(0, 50) }, '▶️ 恢复流程指令')
       const runs = engine.getWaitingRuns(channelId)
       const targetRunId = resolveTargetRun(text, runs) || undefined
