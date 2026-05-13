@@ -41,6 +41,7 @@ class Semaphore {
 }
 
 const LLM_SLOW_THRESHOLD_MS = 10_000
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 180_000
 const EMBED_SLOW_THRESHOLD_MS = 5_000
 const embedSemaphore = new Semaphore(MAX_CONCURRENT_EMBED_CALLS || 5)
 const chatSemaphore = new Semaphore(MAX_CONCURRENT_LLM_CALLS || 3)
@@ -65,12 +66,20 @@ class BailianModel extends BaseModel {
     logger.debug({ model, msgCount: messages.length }, 'LLM chat start')
     await chatSemaphore.acquire()
     try {
-      const response = await this.client.chat.completions.create({
-        model,
-        messages,
-        temperature: options.temperature ?? 0.7,
-        max_tokens: options.maxTokens
-      })
+      const timeoutMs = options.timeoutMs || LLM_TIMEOUT_MS
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      let response
+      try {
+        response = await this.client.chat.completions.create({
+          model,
+          messages,
+          temperature: options.temperature ?? 0.7,
+          max_tokens: options.maxTokens
+        }, { signal: controller.signal })
+      } finally {
+        clearTimeout(timer)
+      }
 
       const content = response.choices?.[0]?.message?.content
       if (!content && content !== '') {
@@ -91,10 +100,15 @@ class BailianModel extends BaseModel {
       }
     } catch (err) {
       const durationMs = Date.now() - startedAt
-      logger.error({ model, durationMs, err: err.message }, 'LLM chat failed')
-      const wrapped = new Error(`BailianModel.chat failed: ${err.message}`)
+      const isTimeout = err.name === 'AbortError' || err.message?.includes('aborted')
+      const errorMsg = isTimeout
+        ? `LLM 调用超时（${LLM_TIMEOUT_MS / 1000}秒）：${model}`
+        : `BailianModel.chat failed: ${err.message}`
+      logger.error({ model, durationMs, err: err.message, isTimeout }, 'LLM chat failed')
+      const wrapped = new Error(errorMsg)
       wrapped.cause = err
       wrapped.isModelError = true
+      wrapped.isTimeout = isTimeout
       throw wrapped
     } finally {
       chatSemaphore.release()

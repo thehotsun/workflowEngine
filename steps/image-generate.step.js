@@ -548,15 +548,25 @@ class ImageGenerateStep extends BaseStep {
         apiKey,
         baseURL: config.OPENAI_BASE_URL || 'https://api.openai.com/v1'
       })
+      const imageTimeoutMs = Number(process.env.IMAGE_GEN_TIMEOUT_MS) || 120_000
       let response
       try {
-        response = await client.images.generate({
-          model: config.OPENAI_IMAGE_MODEL || 'gpt-image-1',
-          prompt,
-          size: config.OPENAI_IMAGE_SIZE || '1536x1024',
-          quality: config.OPENAI_IMAGE_QUALITY || 'low'
-        })
+        const imgController = new AbortController()
+        const imgTimer = setTimeout(() => imgController.abort(), imageTimeoutMs)
+        try {
+          response = await client.images.generate({
+            model: config.OPENAI_IMAGE_MODEL || 'gpt-image-1',
+            prompt,
+            size: config.OPENAI_IMAGE_SIZE || '1536x1024',
+            quality: config.OPENAI_IMAGE_QUALITY || 'low'
+          }, { signal: imgController.signal })
+        } finally {
+          clearTimeout(imgTimer)
+        }
       } catch (err) {
+        if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+          throw new Error(`生图接口超时（${imageTimeoutMs / 1000}秒）`)
+        }
         // OpenAI SDK 将 401 封装在 err.status 里
         const status = err.status || err.statusCode || (err.response && err.response.status)
         if (status === 401) {
