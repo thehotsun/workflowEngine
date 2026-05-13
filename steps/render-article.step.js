@@ -13,7 +13,7 @@ class RenderArticleStep extends BaseStep {
   get name() { return 'render-article' }
   get description() { return '将结构化文章数据渲染为发布用 HTML 与 Markdown，并插入已生成图片' }
   get category() { return 'content-creation' }
-  get timeout() { return 30000 }
+  get timeout() { return 60000 }
   get requires() { return ['articleData'] }
   get provides() { return ['finalMarkdown', 'finalHtml', 'images', 'coverImagePath', 'inlineImagePaths'] }
 

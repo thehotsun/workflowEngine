@@ -15,7 +15,7 @@ class GenerateTopicsStep extends BaseStep {
   get name() { return 'generate-topics' }
   get description() { return '基于热点和用户需求，用 LLM 生成多个候选话题（含标题、简介、角度、评分）' }
   get category() { return 'content-creation' }
-  get timeout() { return 40000 }
+  get timeout() { return 80000 }
   get requires() { return ['input', 'hotspots'] }
   get provides() { return ['topics', 'styleBrief', 'topicCandidates'] }
 

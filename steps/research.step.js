@@ -24,7 +24,7 @@ class ResearchStep extends BaseStep {
   get name() { return 'research' }
   get description() { return '围绕已选话题做写作前研究，输出角度、事实点、大纲、风险提示等结构化结果（LLM）' }
   get category() { return 'content-creation' }
-  get timeout() { return 40000 }
+  get timeout() { return 80000 }
   get requires() { return ['selectedTopic'] }
   get provides() { return ['research'] }
 
