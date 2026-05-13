@@ -102,7 +102,7 @@ class BailianModel extends BaseModel {
       const durationMs = Date.now() - startedAt
       const isTimeout = err.name === 'AbortError' || err.message?.includes('aborted')
       const errorMsg = isTimeout
-        ? `LLM 调用超时（${LLM_TIMEOUT_MS / 1000}秒）：${model}`
+        ? `LLM 调用超时（${timeoutMs / 1000}秒）：${model}`
         : `BailianModel.chat failed: ${err.message}`
       logger.error({ model, durationMs, err: err.message, isTimeout }, 'LLM chat failed')
       const wrapped = new Error(errorMsg)

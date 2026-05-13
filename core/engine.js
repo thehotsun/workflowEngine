@@ -125,6 +125,19 @@ class WorkflowEngine {
         context: context.toJSON()
       })
 
+      // ✅ 流程完成通知
+      try {
+        const notifyChannelId = context.get('channelId')
+        if (notifyChannelId) {
+          const workflowName = workflow.name || workflow.id || '未知流程'
+          const notifyContent = `✅ 流程「${workflowName}」已完成`
+          const notifyMsgId = enqueueMessage({ runId, channelId: notifyChannelId, content: notifyContent })
+          outboxEmitter.emit('new_message', { msgId: notifyMsgId, runId })
+        }
+      } catch (notifyErr) {
+        logger.warn({ runId, err: notifyErr.message }, '完成通知发送失败')
+      }
+
       if (conversation?.id) {
         const summary = buildConversationSummary(context)
         const prevHistory = loadConversationHistory(conversation)
@@ -493,17 +506,17 @@ class WorkflowEngine {
           finishedAt: Date.now(),
           context: context.toJSON()
         })
-      }
 
-      // ✅ 流程完成通知
-      try {
-        const notifyChannelId = context.get('channelId') || channelId
-        const workflowName = workflow.name || workflow.id || '未知流程'
-        const notifyContent = `✅ 流程「${workflowName}」已完成`
-        const notifyMsgId = enqueueMessage({ runId: waitingRun.id, channelId: notifyChannelId, content: notifyContent })
-        outboxEmitter.emit('new_message', { msgId: notifyMsgId, runId: waitingRun.id })
-      } catch (notifyErr) {
-        logger.warn({ runId: waitingRun.id, err: notifyErr.message }, '完成通知发送失败')
+        // ✅ 流程完成通知
+        try {
+          const notifyChannelId = context.get('channelId') || channelId
+          const workflowName = workflow.name || workflow.id || '未知流程'
+          const notifyContent = `✅ 流程「${workflowName}」已完成`
+          const notifyMsgId = enqueueMessage({ runId: waitingRun.id, channelId: notifyChannelId, content: notifyContent })
+          outboxEmitter.emit('new_message', { msgId: notifyMsgId, runId: waitingRun.id })
+        } catch (notifyErr) {
+          logger.warn({ runId: waitingRun.id, err: notifyErr.message }, '完成通知发送失败')
+        }
       }
 
       if (conversation?.id) {
@@ -548,18 +561,6 @@ class WorkflowEngine {
         error: err.message,
         context: context.toJSON()
       })
-
-      // ❌ 流程失败通知
-      try {
-        const notifyChannelId = context.get('channelId') || channelId
-        const workflowName = workflow.name || workflow.id || '未知流程'
-        const stepName = err.stepName || `步骤${err.stepIndex ?? '?'}`
-        const notifyContent = `❌ 流程「${workflowName}」在步骤「${stepName}」失败：${err.message}`
-        const notifyMsgId = enqueueMessage({ runId: waitingRun.id, channelId: notifyChannelId, content: notifyContent })
-        outboxEmitter.emit('new_message', { msgId: notifyMsgId, runId: waitingRun.id })
-      } catch (notifyErr) {
-        logger.warn({ runId: waitingRun.id, err: notifyErr.message }, '失败通知发送失败')
-      }
 
       if (workflow?.onError && workflow.onError !== 'pause') {
         await this._handleOnError({ workflow, context, runId: waitingRun.id, err })
