@@ -45,6 +45,7 @@ const config = require('../config')
 const logger = require('../utils/logger')
 const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('../trigger/outbox-worker')
+const { fetch, Agent, setGlobalDispatcher } = require('undici');
 
 // 暂时注释 access_token 相关内容，使用匿名模式
 /*
@@ -460,36 +461,110 @@ class ImageGenerateStep extends BaseStep {
     return null
   }
 
-  async _searchFreePhotos(query, freePhoto) {
+    async _searchFreePhotos(query, freePhoto) {
+    // 1. 构建 URL 参数
     const params = new URLSearchParams({
       q: query,
       page_size: '12',
       license_type: 'commercial',
       category: 'photograph',
       mature: 'false'
-    })
-    const headers = {
-      Accept: 'application/json',
-      'User-Agent': 'workflow-engine/1.0'
-    }
-    if (freePhoto.accessToken) headers.Authorization = `Bearer ${freePhoto.accessToken}`
+    });
 
-    const res = await fetch(`${freePhoto.apiBase}/images/?${params.toString()}`, { headers, signal: AbortSignal.timeout(freePhoto.timeout) })
-    if (!res.ok) throw new Error(`Openverse search failed: ${res.status}`)
-    const data = await res.json()
-    const items = Array.isArray(data.results) ? data.results : []
-    return items.map(item => ({
-      title: String(item.title || '').trim(),
-      url: String(item.url || '').trim(),
-      fallbackUrl: String(item.thumbnail || '').trim(),
-      creator: String(item.creator || '').trim(),
-      creatorUrl: String(item.creator_url || '').trim(),
-      license: String(item.license || '').trim(),
-      licenseVersion: String(item.license_version || '').trim(),
-      sourcePage: String(item.foreign_landing_url || item.detail_url || '').trim(),
-      width: Number(item.width || 0),
-      height: Number(item.height || 0)
-    })).filter(item => item.url || item.fallbackUrl)
+    // 2. 伪造真实浏览器的请求头
+    const headers = {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      'Referer': 'https://www.google.com/',
+      'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"Windows"',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Connection': 'keep-alive',
+      'Cache-Control': 'max-age=0',
+      'Upgrade-Insecure-Requests': '1'
+    };
+
+    // 3. 如果提供了 accessToken，则添加 Authorization 头
+    if (freePhoto.accessToken) {
+      headers['Authorization'] = `Bearer ${freePhoto.accessToken}`;
+    }
+
+    // 4. 定义一个自定义的 Agent 用于调整 TLS 指纹
+    // 这种方法通过调整 TLS 密码套件的顺序，来改变客户端指纹，从而绕过部分反爬检测[reference:5]
+    let dispatcher = null;
+    try {
+      const { DEFAULT_CIPHERS } = await import('node:tls');
+      const defaultCiphers = DEFAULT_CIPHERS.split(':');
+      // 交换密码套件列表中的第二和第三位，这是一个简单但有效的指纹更改示例[reference:6]
+      if (defaultCiphers.length >= 3) {
+        const shuffledCiphers = [
+          defaultCiphers[0],
+          defaultCiphers[2],
+          defaultCiphers[1],
+          ...defaultCiphers.slice(3)
+        ].join(':');
+        
+        dispatcher = new Agent({
+          // 将调整后的密码套件列表应用到 TLS 连接上
+          connect: { 
+            ciphers: shuffledCiphers,
+          },
+          // 标准 Agent 配置
+          connectTimeout: 10000,   // 10秒连接超时
+          bodyTimeout: 30000,      // 30秒响应超时
+          headersTimeout: 30000,   // 30秒头信息超时
+        });
+        console.log('Using custom Agent with TLS cipher adjustments.');
+      } else {
+        // 如果密码套件列表不符合预期，回退到默认 Agent
+        dispatcher = new Agent();
+        console.warn('Default cipher list length is insufficient, falling back to default Agent.');
+      }
+    } catch (error) {
+      // 如果无法动态导入 'tls' 模块（Node.js 版本问题），回退到默认 Agent
+      console.error('Failed to customize TLS ciphers, using default Agent:', error);
+      dispatcher = new Agent();
+    }
+
+    // 5. 发起请求，并将自定义的 dispatcher 作为配置项传入
+    try {
+      const response = await fetch(`${freePhoto.apiBase}/images/?${params.toString()}`, { 
+        headers, 
+        signal: AbortSignal.timeout(freePhoto.timeout || 8000),
+        dispatcher  // 指定使用我们自定义的 Agent
+      });
+
+      if (!response.ok) {
+        throw new Error(`Openverse search failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const items = Array.isArray(data.results) ? data.results : [];
+
+      // 6. 返回格式化的图片数据
+      return items.map(item => ({
+        title: String(item.title || '').trim(),
+        url: String(item.url || '').trim(),
+        fallbackUrl: String(item.thumbnail || '').trim(),
+        creator: String(item.creator || '').trim(),
+        creatorUrl: String(item.creator_url || '').trim(),
+        license: String(item.license || '').trim(),
+        licenseVersion: String(item.license_version || '').trim(),
+        sourcePage: String(item.foreign_landing_url || item.detail_url || '').trim(),
+        width: Number(item.width || 0),
+        height: Number(item.height || 0)
+      })).filter(item => item.url || item.fallbackUrl);
+
+    } catch (error) {
+      console.error('Failed to fetch from Openverse:', error);
+      // 返回空数组作为失败的降级方案
+      return [];
+    }
   }
 
   async _downloadImage(url, outputPath, timeout) {
