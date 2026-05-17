@@ -16,6 +16,12 @@ const logger = require('../utils/logger')
  *   output: 'searchResults',
  *   timeout: 15000
  * }
+ *
+ * @workflow-config
+ * - 无需配置，行为由 stepDef 参数控制
+ *
+ * @requires [] - 无固定依赖（由 stepDef.input 决定）
+ * @provides [] - 无固定输出（由 stepDef.output 决定）
  */
 class SkillProxyStep extends BaseStep {
   get name() { return 'skill-proxy' }

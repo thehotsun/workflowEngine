@@ -15,7 +15,11 @@ const modelRouter = require('../models/router')
  * 6. imageDirections - 配图方向建议
  * 
  * @workflow-config
- * - 无需配置，自动从context读取
+ * - _config.research.model.taskType: LLM 路由 taskType（默认 'analysis'）
+ * - _config.research.temperature: LLM 温度（默认 0.7）
+ * - _config.research.maxTokens: 最大 token（默认 2000）
+ * - _config.research.persona: 编辑人设（string）
+ * - _config.research.styleGuide: 风格指南（object，含 angle/facts/structure/cues/taboos）
  * 
  * @requires ['selectedTopic'] - 已选定的话题
  * @provides ['research'] - 完整的研究结果对象
@@ -34,6 +38,14 @@ class ResearchStep extends BaseStep {
     const searchResults = context.get('searchResults', [])
     const styleBrief = context.get('styleBrief', [])
 
+    const config = context.get('_config') || {}
+    const stepConfig = config[this._configKey] || {}
+
+    const modelConfig = stepConfig.model || {}
+    const taskType = modelConfig.taskType || 'analysis'
+    const temperature = stepConfig.temperature ?? 0.7
+    const maxTokens = stepConfig.maxTokens ?? 2000
+
     const ragContext = ragResults
       .map(c => `${c.heading ? `[${c.heading}] ` : ''}${c.content}`)
       .join('\n\n')
@@ -41,25 +53,32 @@ class ResearchStep extends BaseStep {
       ? searchResults.slice(0, 3).map(r => r.content || r.snippet || '').join('\n\n')
       : ''
 
-    const systemPrompt = `你是中老年公众号的研究编辑。
-请围绕给定题目，结合当前中文公开网页和适合中老年公众号的高阅读写法，输出研究摘要。
+    const persona = stepConfig.persona || '你是中老年公众号的研究编辑。'
+    const styleGuide = stepConfig.styleGuide || {}
 
-要求：
-1. 目标读者是 50-75 岁读者和其家属。
-2. 输出的信息必须服务于"短文章写作"，不要写成学术综述。
-3. 健康、医保、养老金、法律类内容必须谨慎，不做绝对结论。
-4. styleCues 要总结写法，不要输出空泛词。
-
-输出格式：JSON，格式如下：
-{
-  "articleAngle": "文章角度",
-  "keyFacts": ["关键事实1", "关键事实2"],
-  "styleCues": ["写法提示1", "写法提示2"],
-  "outline": ["大纲1", "大纲2", "大纲3"],
-  "riskNotes": ["风险提示1"],
-  "imageDirections": ["配图方向1"]
-}
-`
+    const systemPrompt = stepConfig.systemPrompt || [
+      persona,
+      '请围绕给定题目，结合当前中文公开网页和适合中老年公众号的高阅读写法，输出研究摘要。',
+      '',
+      '要求：',
+      '1. 目标读者是 50-75 岁读者和其家属。',
+      '2. 输出的信息必须服务于"短文章写作"，不要写成学术综述。',
+      styleGuide.angle ? `3. ${styleGuide.angle}` : '',
+      styleGuide.facts ? `4. ${styleGuide.facts}` : '',
+      styleGuide.structure ? `5. ${styleGuide.structure}` : '',
+      styleGuide.cues ? `6. ${styleGuide.cues}` : '6. styleCues 要总结写法，不要输出空泛词。',
+      styleGuide.taboos ? `7. ${styleGuide.taboos}` : '7. 健康、医保、养老金、法律类内容必须谨慎，不做绝对结论。',
+      '',
+      '输出格式：JSON，格式如下：',
+      '{',
+      '  "articleAngle": "文章角度",',
+      '  "keyFacts": ["关键事实1", "关键事实2"],',
+      '  "styleCues": ["写法提示1", "写法提示2"],',
+      '  "outline": ["大纲1", "大纲2", "大纲3"],',
+      '  "riskNotes": ["风险提示1"],',
+      '  "imageDirections": ["配图方向1"]',
+      '}'
+    ].filter(Boolean).join('\n')
 
     const userPrompt = [
       `题目：${selectedTopic.title}`,
@@ -70,11 +89,11 @@ class ResearchStep extends BaseStep {
       searchContext ? `\n最新资讯参考：\n${searchContext}` : ''
     ].filter(Boolean).join('\n')
 
-    const model = modelRouter.route('analysis')
+    const model = modelRouter.route(taskType)
     const { content, usage } = await model.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
-    ])
+    ], { temperature, maxTokens })
 
     let research = null
 

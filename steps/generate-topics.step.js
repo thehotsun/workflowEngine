@@ -7,9 +7,14 @@ const modelRouter = require('../models/router')
  * generate-topics step - 生成多个候选话题
  *
  * @workflow-config
- * - _config.topics.count: 生成话题数量（默认 6）
- * - _config.topics.avoidDuplicates: 是否避免重复历史话题（默认 true）
- * - _config.accountProfile.preferredTopics: 账号偏好主题，会影响话题评分
+ * - _config.generateTopics.model.taskType: LLM 路由 taskType（默认 'analysis'）
+ * - _config.generateTopics.temperature: LLM 温度（默认 0.8）
+ * - _config.generateTopics.maxTokens: 最大 token（默认 2000）
+ * - _config.generateTopics.count: 生成话题数量（默认 6）
+ * - _config.generateTopics.avoidDuplicates: 是否避免重复历史话题（默认 true）
+ * - _config.generateTopics.persona: 编辑人设（string）
+ * - _config.generateTopics.styleGuide: 风格指南（object，含 title/direction/taboos）
+ * - _config.accountProfile.preferredTopics: 账号偏好主题（公共配置）
  */
 class GenerateTopicsStep extends BaseStep {
   get name() { return 'generate-topics' }
@@ -46,11 +51,16 @@ class GenerateTopicsStep extends BaseStep {
     const searchResults = context.get('searchResults', [])
     const selectedTopicsHistory = context.get('selectedTopicsHistory', [])
     const config = context.get('_config') || {}
-    const topicsConfig = config.topics || {}
+    const stepConfig = config[this._configKey] || {}
     const accountProfile = config.accountProfile || {}
     const preferredTopics = accountProfile.preferredTopics || []
-    const topicCount = topicsConfig.count || 6
-    const avoidDuplicates = topicsConfig.avoidDuplicates !== false
+    const topicCount = stepConfig.count || 6
+    const avoidDuplicates = stepConfig.avoidDuplicates !== false
+
+    const modelConfig = stepConfig.model || {}
+    const taskType = modelConfig.taskType || 'analysis'
+    const temperature = stepConfig.temperature ?? 0.8
+    const maxTokens = stepConfig.maxTokens ?? 2000
 
     const ragContext = ragResults
       .map(c => `${c.heading ? `[${c.heading}] ` : ''}${c.content}`)
@@ -66,34 +76,39 @@ class GenerateTopicsStep extends BaseStep {
     let styleBrief = []
     let topics = []
 
-    const systemPrompt = `你是一个服务 50-75 岁读者的中文公众号主编。
-请根据用户需求，给出 ${topicCount} 个"短文章"候选题，供人工选择。
+    const persona = stepConfig.persona || '你是一个服务 50-75 岁读者的中文公众号主编。'
+    const styleGuide = stepConfig.styleGuide || {}
 
-要求：
-1. 读者是中老年人和会转发给父母的家属。
-2. 标题必须清楚、具体、像真实公众号标题，不要像 AI 在做提纲。
-3. 优先选择这些方向：健康提醒、退休生活、医保养老、家庭关系、反诈安全、换季出行、手机使用、小区生活。
-4. 如果题目涉及健康、药物、养老金政策、法律，必须保守表达，不要夸张承诺。
-5. styleBrief 要总结今天应该模仿的高阅读写法，不要写空话。
-
-输出格式：JSON，格式如下：
-{
-  "styleBrief": ["写法1", "写法2", ...],
-  "topics": [
-    {
-      "id": "T01",
-      "title": "题目标题",
-      "intro": "简介",
-      "angle": "写作角度",
-      "whyNow": "为什么今天写",
-      "score": 9.2,
-      "tags": ["标签1", "标签2"],
-      "sourceClues": ["参考线索1"]
-    },
-    ...
-  ]
-}
-`
+    const systemPrompt = stepConfig.systemPrompt || [
+      persona,
+      `请根据用户需求，给出 ${topicCount} 个"短文章"候选题，供人工选择。`,
+      '',
+      '要求：',
+      '1. 读者是中老年人和会转发给父母的家属。',
+      '2. 标题必须清楚、具体、像真实公众号标题，不要像 AI 在做提纲。',
+      styleGuide.title ? `3. ${styleGuide.title}` : '3. 优先选择这些方向：健康提醒、退休生活、医保养老、家庭关系、反诈安全、换季出行、手机使用、小区生活。',
+      styleGuide.direction ? `4. ${styleGuide.direction}` : '',
+      styleGuide.taboos ? `5. ${styleGuide.taboos}` : '5. 如果题目涉及健康、药物、养老金政策、法律，必须保守表达，不要夸张承诺。',
+      '6. styleBrief 要总结今天应该模仿的高阅读写法，不要写空话。',
+      '',
+      '输出格式：JSON，格式如下：',
+      '{',
+      '  "styleBrief": ["写法1", "写法2", ...],',
+      '  "topics": [',
+      '    {',
+      '      "id": "T01",',
+      '      "title": "题目标题",',
+      '      "intro": "简介",',
+      '      "angle": "写作角度",',
+      '      "whyNow": "为什么今天写",',
+      '      "score": 9.2,',
+      '      "tags": ["标签1", "标签2"],',
+      '      "sourceClues": ["参考线索1"]',
+      '    },',
+      '    ...',
+      '  ]',
+      '}'
+    ].filter(Boolean).join('\n')
 
     const userPromptParts = [`用户需求：${input}`]
     if (hotspotsText) userPromptParts.push(`\n今日热点：\n${hotspotsText}`)
@@ -104,7 +119,7 @@ class GenerateTopicsStep extends BaseStep {
     }
     const userPrompt = userPromptParts.join('\n')
 
-    const model = modelRouter.route('analysis')
+    const model = modelRouter.route(taskType)
     const messages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
@@ -117,7 +132,7 @@ class GenerateTopicsStep extends BaseStep {
     }
 
     try {
-      const { content: modelContent, usage } = await model.chat(messages)
+      const { content: modelContent, usage } = await model.chat(messages, { temperature, maxTokens })
       content = modelContent
 
       try {

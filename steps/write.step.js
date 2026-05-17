@@ -7,8 +7,13 @@ const modelRouter = require('../models/router')
  * write step - 生成文章
  *
  * @workflow-config
+ * - _config.write.model.taskType: LLM 路由 taskType（默认 'writing'）
+ * - _config.write.temperature: LLM 温度（默认 0.8）
+ * - _config.write.maxTokens: 最大 token（默认 4000）
  * - _config.write.targetWordCount: { min, max } 文章字数范围（默认 900-1400）
  * - _config.write.digestLength: 摘要最大字数（默认 54）
+ * - _config.write.persona: 主笔人设（string）
+ * - _config.write.styleGuide: 风格指南（object，含 opening/tone/structure/ending/taboos/antiAI）
  */
 class WriteStep extends BaseStep {
   get name() { return 'write' }
@@ -25,9 +30,14 @@ class WriteStep extends BaseStep {
     const ragResults = context.get('ragResults', [])
     const searchResults = context.get('searchResults', [])
     const config = context.get('_config') || {}
-    const writeConfig = config.write || {}
-    const targetWordCount = writeConfig.targetWordCount || { min: 900, max: 1400 }
-    const digestLength = writeConfig.digestLength || 54
+    const stepConfig = config[this._configKey] || {}
+    const targetWordCount = stepConfig.targetWordCount || { min: 900, max: 1400 }
+    const digestLength = stepConfig.digestLength || 54
+
+    const modelConfig = stepConfig.model || {}
+    const taskType = modelConfig.taskType || 'writing'
+    const temperature = stepConfig.temperature ?? 0.8
+    const maxTokens = stepConfig.maxTokens ?? 4000
 
     const ragContext = ragResults
       .map(c => `${c.heading ? `[${c.heading}] ` : ''}${c.content}`)
@@ -36,41 +46,49 @@ class WriteStep extends BaseStep {
       ? searchResults.slice(0, 3).map(r => r.content || r.snippet || '').join('\n\n')
       : ''
 
-    const systemPrompt = `你是一个长期写中老年公众号的中文主笔。
-请写一篇"短文章"，目标读者是 50-75 岁读者与其家属。
+    const persona = stepConfig.persona || '你是一个长期写中老年公众号的中文主笔。'
+    const styleGuide = stepConfig.styleGuide || {}
 
-硬性要求：
-1. 不要有 AI 味，不要出现"随着……发展""值得我们思考"等空话。
-2. 开头必须从日常生活场景切入。
-3. 整体长度控制在 ${targetWordCount.min}-${targetWordCount.max} 字左右，适合公众号快速阅读。
-4. 段落短，语言稳，像一个有经验、会照顾读者情绪的编辑在说话。
-5. 必须给出实用提醒，但不能制造恐慌。
-6. 健康、药物、政策、报销、法律类内容要提醒读者以官方或专业人士意见为准。
-7. 标题要像真实公众号标题，清楚、具体、好懂。
-8. digest 控制在 ${digestLength} 个汉字以内。
-9. inline_images 只允许使用这些 slot：after_lead、after_section_1、after_section_2、before_ending。
-
-输出格式：JSON，格式如下：
-{
-  "title": "文章标题",
-  "digest": "摘要（${digestLength}字以内）",
-  "lead": ["引言段落1", "引言段落2"],
-  "sections": [
-    {
-      "heading": "小节标题",
-      "paragraphs": ["段落1", "段落2"],
-      "highlight": "重点强调的一句话",
-      "checklist": ["行动1", "行动2"]
-    }
-  ],
-  "ending": ["结尾段落1", "结尾段落2"],
-  "cover_prompt": "封面图提示词",
-  "inline_images": [
-    { "slot": "after_lead", "prompt": "图片提示词", "caption": "图片说明" }
-  ],
-  "tags": ["标签1", "标签2"]
-}
-`
+    const systemPrompt = stepConfig.systemPrompt || [
+      persona,
+      '请写一篇"短文章"，目标读者是 50-75 岁读者与其家属。',
+      '',
+      '硬性要求：',
+      styleGuide.antiAI ? `1. ${styleGuide.antiAI}` : '1. 不要有 AI 味，不要出现"随着……发展""值得我们思考"等空话。',
+      styleGuide.opening ? `2. ${styleGuide.opening}` : '2. 开头必须从日常生活场景切入。',
+      `3. 整体长度控制在 ${targetWordCount.min}-${targetWordCount.max} 字左右，适合公众号快速阅读。`,
+      '4. 段落短，语言稳，像一个有经验、会照顾读者情绪的编辑在说话。',
+      '5. 必须给出实用提醒，但不能制造恐慌。',
+      '6. 健康、药物、政策、报销、法律类内容要提醒读者以官方或专业人士意见为准。',
+      '7. 标题要像真实公众号标题，清楚、具体、好懂。',
+      `8. digest 控制在 ${digestLength} 个汉字以内。`,
+      '9. inline_images 只允许使用这些 slot：after_lead、after_section_1、after_section_2、before_ending。',
+      styleGuide.tone ? `10. ${styleGuide.tone}` : '',
+      styleGuide.structure ? `11. ${styleGuide.structure}` : '',
+      styleGuide.ending ? `12. ${styleGuide.ending}` : '',
+      styleGuide.taboos ? `13. ${styleGuide.taboos}` : '',
+      '',
+      '输出格式：JSON，格式如下：',
+      '{',
+      '  "title": "文章标题",',
+      `  "digest": "摘要（${digestLength}字以内）",`,
+      '  "lead": ["引言段落1", "引言段落2"],',
+      '  "sections": [',
+      '    {',
+      '      "heading": "小节标题",',
+      '      "paragraphs": ["段落1", "段落2"],',
+      '      "highlight": "重点强调的一句话",',
+      '      "checklist": ["行动1", "行动2"]',
+      '    }',
+      '  ],',
+      '  "ending": ["结尾段落1", "结尾段落2"],',
+      '  "cover_prompt": "封面图提示词",',
+      '  "inline_images": [',
+      '    { "slot": "after_lead", "prompt": "图片提示词", "caption": "图片说明" }',
+      '  ],',
+      '  "tags": ["标签1", "标签2"]',
+      '}'
+    ].filter(Boolean).join('\n')
 
     const userPrompt = [
       `选题信息：`,
@@ -91,11 +109,11 @@ class WriteStep extends BaseStep {
       `\n请根据以上信息，按照要求的 JSON 格式输出文章。`
     ].filter(Boolean).join('\n')
 
-    const model = modelRouter.route('writing')
+    const model = modelRouter.route(taskType)
     const { content, usage } = await model.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
-    ])
+    ], { temperature, maxTokens })
 
     let articleData = null
 

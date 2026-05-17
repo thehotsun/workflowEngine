@@ -26,6 +26,15 @@ class BaseStep {
   }
 
   /**
+   * 返回本 step 在 workflow config 中对应的键名（驼峰）。
+   * 默认从 kebab-case 的 name 转换：'generate-topics' → 'generateTopics'
+   * @returns {string}
+   */
+  get _configKey() {
+    return this.name.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+  }
+
+  /**
    * 声明此 step 依赖 context 中的哪些 key（可选）。
    * engine 在执行前会检查这些 key 是否存在，如缺失则抛出 StepInputError（不重试）。
    * 子类按需 override，返回 string[]。

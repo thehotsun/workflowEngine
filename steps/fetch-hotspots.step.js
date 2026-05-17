@@ -7,8 +7,11 @@ const https = require('https')
  * fetch-hotspots step - 抓取热点（微博、头条、百度）
  *
  * @workflow-config
- * - _config.hotspots.limitPerSource: 每个来源抓取数量（默认10）
- * - _config.hotspots.enabledSources: 启用的来源（默认 ['weibo', 'toutiao', 'baidu']）
+ * - _config.fetchHotspots.limitPerSource: 每个来源抓取数量（默认 10）
+ * - _config.fetchHotspots.enabledSources: 启用的来源（默认 ['weibo', 'toutiao', 'baidu']）
+ *
+ * @requires [] - 无依赖
+ * @provides ['hotspots'] - 热点列表
  */
 class FetchHotspotsStep extends BaseStep {
   get name() { return 'fetch-hotspots' }
@@ -195,7 +198,7 @@ class FetchHotspotsStep extends BaseStep {
   }
 
   async execute(context, stepDef) {
-    const config = context.get('_config')?.hotspots || {}
+    const config = context.get('_config')?.fetchHotspots || {}
     const limit = config.limitPerSource || 10
     const enabledSources = config.enabledSources || ['weibo', 'toutiao', 'baidu']
     const demo = config.demo || false

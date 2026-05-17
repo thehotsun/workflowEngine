@@ -3,6 +3,16 @@
 const BaseStep = require('./base.step')
 const WeChatPlatform = require('./platforms/wechat')
 
+/**
+ * platform-publish step — 将文章提交到发布平台草稿箱
+ *
+ * @workflow-config
+ * - _config.publishing.platforms: 发布平台列表（公共配置）
+ * - _config.platformPublish.platforms: 本 step 专属平台覆盖（可选）
+ *
+ * @requires ['articleData', 'finalHtml'] - 文章数据和渲染后的 HTML
+ * @provides ['platformPublishResults', 'wechatDraftMediaId'] - 发布结果
+ */
 class PlatformPublishStep extends BaseStep {
   get name() { return 'platform-publish' }
   get description() { return '将文章提交到发布平台草稿箱，当前支持微信公众号并预留多平台扩展' }
@@ -15,11 +25,10 @@ class PlatformPublishStep extends BaseStep {
   async execute(context, stepDef = {}) {
     const workflowConfig = context.get('_config') || {}
     const publishingConfig = workflowConfig.publishing || {}
-    const platforms = Array.isArray(stepDef.platforms)
-      ? stepDef.platforms
-      : Array.isArray(publishingConfig.platforms)
-        ? publishingConfig.platforms
-        : []
+    const stepConfig = workflowConfig[this._configKey] || {}
+    const platforms = stepConfig.platforms
+      || publishingConfig.platforms
+      || []
     const enabledPlatforms = platforms.filter(platform => platform && platform.enabled !== false)
 
     if (enabledPlatforms.length === 0) {

@@ -4,6 +4,12 @@ const BaseStep = require('./base.step')
 
 /**
  * 并行执行多个子 step，等待所有完成后合并结果
+ *
+ * @workflow-config
+ * - 无需配置
+ *
+ * @requires ['_runId'] - 运行 ID
+ * @provides [] - 子步骤结果数组
  */
 class ParallelStep extends BaseStep {
   constructor({ steps, engine, workflow, conversation }) {

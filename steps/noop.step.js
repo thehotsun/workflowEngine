@@ -4,6 +4,12 @@ const BaseStep = require('./base.step')
 
 /**
  * 占位 step，不做任何事
+ *
+ * @workflow-config
+ * - 无需配置
+ *
+ * @requires [] - 无依赖
+ * @provides [] - 无输出
  */
 class NoopStep extends BaseStep {
   get name() { return 'noop' }

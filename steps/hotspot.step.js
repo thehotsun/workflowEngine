@@ -13,7 +13,10 @@ const modelRouter = require('../models/router')
  * 4. 如果没有搜索/知识库数据，仅凭用户输入生成建议
  * 
  * @workflow-config
- * - 无需配置，自动从context读取
+ * - _config.hotspot.model.taskType: LLM 路由 taskType（默认 'analysis'）
+ * - _config.hotspot.temperature: LLM 温度（默认 0.7）
+ * - _config.hotspot.maxTokens: 最大 token（默认 1000）
+ * - _config.hotspot.persona: 编辑人设（string）
  * 
  * @requires ['input'] - 用户原始需求（可选，用于 fallback）
  * @provides ['hotspot', 'hotspotSuggestions'] - 热点话题和切入建议
@@ -30,6 +33,13 @@ class HotspotStep extends BaseStep {
     const searchResults = context.get('searchResults', [])
     const ragResults = context.get('ragResults', [])
 
+    const config = context.get('_config') || {}
+    const stepConfig = config[this._configKey] || {}
+    const modelConfig = stepConfig.model || {}
+    const taskType = modelConfig.taskType || 'analysis'
+    const temperature = stepConfig.temperature ?? 0.7
+    const maxTokens = stepConfig.maxTokens ?? 1000
+
     const searchCtx = Array.isArray(searchResults)
       ? searchResults.slice(0, 5).map(r => r.content || r.snippet || r.title || '').filter(Boolean).join('\n')
       : ''
@@ -38,8 +48,9 @@ class HotspotStep extends BaseStep {
       ? ragResults.slice(0, 3).map(r => `${r.heading ? `[${r.heading}] ` : ''}${r.content}`).filter(Boolean).join('\n')
       : ''
 
-    const systemPrompt = [
-      '你是一位资深内容策划，擅长从海量信息中快速识别热点话题和传播角度。',
+    const persona = stepConfig.persona || '你是一位资深内容策划，擅长从海量信息中快速识别热点话题和传播角度。'
+    const systemPrompt = stepConfig.systemPrompt || [
+      persona,
       '请分析下方信息，提炼出：',
       '1. 最值得关注的热点话题（1~3 个，每个不超过 20 字）',
       '2. 针对每个话题，给出一个适合公众号或群内传播的内容切入角度（一句话）',
@@ -52,11 +63,11 @@ class HotspotStep extends BaseStep {
     if (ragCtx) userLines.push(`\n知识库参考：\n${ragCtx}`)
     userLines.push('\n请按 JSON 格式输出。')
 
-    const model = modelRouter.route('analysis')
+    const model = modelRouter.route(taskType)
     const { content, usage } = await model.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userLines.join('\n') }
-    ])
+    ], { temperature, maxTokens })
 
     let hotspot = ''
     let suggestions = []

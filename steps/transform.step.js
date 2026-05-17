@@ -9,6 +9,12 @@ const BaseStep = require('./base.step')
  *   type: 'transform',
  *   run: (ctx) => ({ prompt: `请总结：${ctx.get('input')}` })
  * }
+ *
+ * @workflow-config
+ * - 无需配置，行为由 stepDef.run 函数控制
+ *
+ * @requires [] - 无固定依赖（由 stepDef.run 决定）
+ * @provides [] - 无固定输出（由 stepDef.run 返回值决定）
  */
 class TransformStep extends BaseStep {
   get name() { return 'transform' }

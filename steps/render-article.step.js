@@ -6,8 +6,11 @@ const BaseStep = require('./base.step')
  * render-article step - 渲染文章为 HTML 和 Markdown 格式
  *
  * @workflow-config
- * - _config.accountProfile.authorCard: 作者卡片 HTML（可选）
- * - _config.images.enabledSlots: 启用的图片 slot 列表（默认全部启用）
+ * - _config.accountProfile.authorCard: 作者卡片配置（公共配置）
+ * - _config.imageGenerate.enabledSlots: 启用的图片 slot 列表（默认全部启用）
+ *
+ * @requires ['articleData'] - 文章结构化数据
+ * @provides ['finalMarkdown', 'finalHtml', 'images', 'coverImagePath', 'inlineImagePaths'] - 渲染结果
  */
 class RenderArticleStep extends BaseStep {
   get name() { return 'render-article' }
@@ -215,8 +218,8 @@ class RenderArticleStep extends BaseStep {
     const articleData = context.get('articleData')
     const config = context.get('_config') || {}
     const accountProfile = config.accountProfile || {}
-    const imagesConfig = config.images || {}
-    const enabledSlots = new Set(imagesConfig.enabledSlots || ['after_lead', 'after_section_1', 'after_section_2', 'before_ending'])
+    const imageGenerateConfig = config.imageGenerate || {}
+    const enabledSlots = new Set(imageGenerateConfig.enabledSlots || ['after_lead', 'after_section_1', 'after_section_2', 'before_ending'])
     const coverImagePath = context.get('coverImagePath') || null
     const inlineImagePaths = context.get('inlineImagePaths') || {}
     const assetSlots = { ...inlineImagePaths }

@@ -11,6 +11,12 @@ const BaseStep = require('./base.step')
  *   ifTrue:  { type: 'write' },
  *   ifFalse: { type: 'skill-proxy', skill: 'web-search', ... }
  * }
+ *
+ * @workflow-config
+ * - 无需配置，行为由 stepDef.condition/ifTrue/ifFalse 控制
+ *
+ * @requires [] - 无固定依赖（由 stepDef.condition 决定）
+ * @provides [] - 无固定输出（由分支子步骤决定）
  */
 class ConditionalStep extends BaseStep {
   constructor({ engine, workflow, conversation }) {

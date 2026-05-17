@@ -27,7 +27,7 @@
 module.exports = {
   // 流程唯一标识（内部使用，不用管）
   id: 'article_flow',
-  
+
   // 流程名称
   name: '公众号文章生成',
 
@@ -35,22 +35,18 @@ module.exports = {
   // 🎛️ 配置区域（你可以根据需要修改这些）
   // ==========================================
   config: {
-    /**
-     * 🔍 知识库检索配置
-     * 从本地知识库中最多取多少条相关内容
-     */
-    ragQuery: {
-      topK: 5
-    },
+    // ==========================================
+    // 公共配置（非 step 名，所有 step 可读）
+    // ==========================================
 
     /**
      * 👤 账号/品牌配置（非常重要！）
      * 这里定义了你的公众号是谁，写给谁看，风格是什么
+     * 消费方：generateTopics, renderArticle
      */
     accountProfile: {
       // 公众号的名字
       accountName: '心栖书香',
-      
       // 文章末尾的作者卡片
       authorCard: {
         badge: '',
@@ -59,77 +55,166 @@ module.exports = {
         highlights: [
           '专注家庭关系、夫妻相处与代际沟通',
           '用温和、能共情的文字，写家里那些最难说出口的情绪',
-          '愿每一篇短文，都能帮家里少一点慌张，多一点从容'
-        ]
+          '愿每一篇短文，都能帮家里少一点慌张，多一点从容',
+        ],
       },
-      
       // 你喜欢写哪些类型的话题（系统会优先考虑）
       preferredTopics: [
         '夫妻关系',
         '家庭关系',
         '代际沟通',
         '退休生活',
-        '健康提醒'
-      ]
-    },
-
-    /**
-     * 🔥 热点抓取配置
-     * 从哪些平台抓热点，每个平台抓多少条
-     */
-    hotspots: {
-      limitPerSource: 10,            // 每个来源最多取 10 条
-      enabledSources: ['weibo', 'toutiao', 'baidu']  // 启用的来源：微博、头条、百度
-    },
-
-    /**
-     * 📝 话题生成配置
-     */
-    topics: {
-      count: 6,             // 每次生成 6 个候选话题供选择
-      avoidDuplicates: true // 避免重复之前写过的话题
-    },
-
-    /**
-     * ✍️ 文章写作配置
-     */
-    write: {
-      targetWordCount: { min: 900, max: 1400 }, // 文章字数在 900-1400 之间
-      digestLength: 54                          // 摘要最多 54 个汉字
-    },
-
-    /**
-     * 🖼️ 图片配置
-     */
-    images: {
-      // 在文章的哪些位置放图
-      enabledSlots: [
-        'after_lead',       // 引言后面
-        'after_section_1',  // 第一小节后面
-        'after_section_2',  // 第二小节后面
-        'before_ending'     // 结尾前面
+        '健康提醒',
       ],
-      // 如果 AI 没生成封面图提示词，用这个默认的
-      coverPromptFallback: '温暖、真实的中老年家庭生活场景，光线柔和，横版，适合公众号封面'
     },
 
     /**
      * 📢 发布平台配置
-     * 支持多平台扩展，当前已实现微信公众号草稿箱
+     * 消费方：platformPublish
      */
     publishing: {
       platforms: [
         {
           type: 'wechat',
-          enabled: true
-          // appId 和 appSecret 从环境变量 WECHAT_APP_ID / WECHAT_APP_SECRET 读取
-          // 或在此处直接配置：appId: '', appSecret: ''
-        }
-        // 预留扩展：
-        // { type: 'toutiao', enabled: false }
-        // { type: 'baijiahao', enabled: false }
-      ]
-    }
+          enabled: true,
+        },
+      ],
+    },
+
+    // ==========================================
+    // Step 专属配置（以 step 驼峰名为键）
+    // 每个 step 通过 this._configKey 读取自己的配置
+    // 所有 LLM 调用参数（model/temperature/maxTokens/persona/styleGuide）均由 config 控制
+    // ==========================================
+
+    /**
+     * 消费方：steps/fetch-hotspots.step.js
+     */
+    fetchHotspots: {
+      limitPerSource: 10,
+      enabledSources: ['weibo', 'toutiao', 'baidu'],
+    },
+
+    /**
+     * 消费方：steps/generate-topics.step.js
+     */
+    generateTopics: {
+      model: { taskType: 'analysis' },
+      temperature: 0.8,
+      maxTokens: 2000,
+      count: 6,
+      avoidDuplicates: true,
+      persona:
+        '你是中老年公众号的情感主编。你擅长发现那些"人人心里有、人人嘴上不说"的家庭情感话题。',
+      styleGuide: {
+        title:
+          '标题要有情感钩子，让人一看就觉得"这是在说我"。好标题如"老伴越来越沉默，不是不爱了，是有话不敢说"；差标题如"如何改善夫妻关系"',
+        direction:
+          '优先选择：夫妻关系中的"说不出口"、代际之间的"误会与和解"、退休后的"重新相处"',
+        taboos: '健康、药物、养老金、法律类内容必须保守表达，不夸张承诺',
+      },
+    },
+
+    /**
+     * 消费方：steps/rag-query.step.js
+     */
+    ragQuery: {
+      topK: 5,
+    },
+
+    /**
+     * 消费方：steps/research.step.js
+     */
+    research: {
+      model: { taskType: 'analysis' },
+      temperature: 0.7,
+      maxTokens: 2000,
+      persona:
+        '你是中老年公众号的情感研究编辑。你擅长从家庭关系、夫妻相处、代际沟通中挖掘最能引发共鸣的情感切入点。',
+      styleGuide: {
+        angle:
+          'articleAngle 必须是情感切入点（如"从老伴不说话看退休夫妻的情感疏离"），不是信息罗列',
+        facts: 'keyFacts 要包含能引发共鸣的生活细节或真实场景对话，不列数据',
+        structure: 'outline 按"场景→冲突→理解→行动"四段式组织',
+        cues: 'styleCues 要写具体写法（如"用对话开头，不用陈述句开头""每段不超过3行，像在跟读者聊天"），不写空话',
+        taboos: '健康、医保、养老金、法律类内容必须谨慎，不做绝对结论',
+      },
+    },
+
+    /**
+     * 消费方：steps/write.step.js
+     */
+    write: {
+      model: { taskType: 'writing' },
+      temperature: 0.8,
+      maxTokens: 4000,
+      targetWordCount: { min: 900, max: 1400 },
+      digestLength: 54,
+      persona:
+        '你是中老年公众号的情感主笔。你擅长用真实、克制的笔触写家庭里那些"说不出口"的情绪，让读者觉得"这写的就是我家"。',
+      styleGuide: {
+        opening:
+          '开头必须从一个具体的家庭场景或对话切入，让读者3秒内产生代入感。示例："那天晚饭，老伴又没怎么说话。我问她是不是不舒服，她说没有。但我知道，她心里有事。"',
+        tone: '情感表达要克制。用细节代替形容词（"他放下筷子，看了我一眼"），用场景代替感慨（不写"他很难过"）',
+        structure:
+          '先讲一个让人心里一紧的小故事 → 展开分析"为什么会这样" → 给一个温暖的落点。不要直接给建议，让读者自己悟出来',
+        ending: '结尾要让人想转发给家人。用一句能截图的话收尾',
+        taboos:
+          '不制造焦虑、不挑拨对立、不夸张煽情。健康/法律/政策类内容必须加风险提示',
+        antiAI:
+          '禁止出现"随着……发展""值得我们思考""由此可见""综上所述"等AI味表达',
+      },
+    },
+
+    /**
+     * 消费方：steps/polish.step.js
+     */
+    polish: {
+      model: { taskType: 'writing' },
+      temperature: 0.5,
+      maxTokens: 4000,
+      persona:
+        '你是中老年公众号的资深编辑。你擅长打磨情感文字，让每一句都说到读者心里。',
+      styleGuide: {
+        focus: '删掉所有"说教感"的句子。不告诉读者"你应该"，让读者自己感受到',
+        concrete: '把抽象表达换成具体场景或对话',
+        antiAI:
+          '检查并删除AI味词汇（值得深思、由此可见、综上所述、随着……发展）',
+        rhythm: '段落更短，节奏更轻，像在跟读者聊天而不是上课',
+        ending: '结尾如果不够扎心，加一句能让人停下来想一想的收尾',
+      },
+    },
+
+    /**
+     * 消费方：steps/image-generate.step.js
+     */
+    imageGenerate: {
+      enabledSlots: [
+        'after_lead',
+        'after_section_1',
+        'after_section_2',
+        'before_ending',
+      ],
+      coverPromptFallback:
+        '温暖、真实的中老年家庭生活场景，光线柔和，横版，适合公众号封面',
+    },
+
+    /**
+     * 消费方：steps/render-article.step.js
+     */
+    renderArticle: {},
+
+    /**
+     * 消费方：steps/web-search.step.js
+     */
+    webSearch: {
+      count: 5,
+    },
+
+    /**
+     * 消费方：steps/platform-publish.step.js
+     */
+    platformPublish: {},
   },
 
   // ==========================================
@@ -138,7 +223,7 @@ module.exports = {
   trigger: {
     type: 'message',
     // 当用户说这些话时，就会自动触发这个流程
-    match: /写文章|写公众号|帮我写|生成文章/
+    match: /写文章|写公众号|帮我写|生成文章/,
   },
 
   // ==========================================
@@ -150,7 +235,7 @@ module.exports = {
     // 去微博、头条、百度看看今天大家都在讨论什么
     // --------------------------------------------------
     {
-      type: 'fetch-hotspots'
+      type: 'fetch-hotspots',
     },
 
     // --------------------------------------------------
@@ -158,7 +243,7 @@ module.exports = {
     // 结合用户输入 + 热点 + 账号偏好，生成 6 个候选标题
     // --------------------------------------------------
     {
-      type: 'generate-topics'
+      type: 'generate-topics',
     },
 
     // --------------------------------------------------
@@ -166,7 +251,7 @@ module.exports = {
     // 从 6 个候选中选一个最好的（或者你可以自己选）
     // --------------------------------------------------
     {
-      type: 'select-topic'
+      type: 'select-topic',
     },
 
     // --------------------------------------------------
@@ -176,8 +261,13 @@ module.exports = {
     {
       type: 'rag-query',
       requires: ['selectedTopic'],
-      input: ctx => ({ query: ctx.get('selectedTopic')?.title || ctx.get('topics')?.[0]?.title || ctx.get('input') }),
-      output: 'ragResults'
+      input: (ctx) => ({
+        query:
+          ctx.get('selectedTopic')?.title ||
+          ctx.get('topics')?.[0]?.title ||
+          ctx.get('input'),
+      }),
+      output: 'ragResults',
     },
 
     // --------------------------------------------------
@@ -186,21 +276,24 @@ module.exports = {
     // --------------------------------------------------
     {
       type: 'conditional',
-      condition: ctx => {
+      condition: (ctx) => {
         const r = ctx.get('ragResults')
         return !Array.isArray(r) || r.length === 0
       },
       ifTrue: {
         type: 'skill-proxy',
         skill: 'web-search',
-        input: ctx => ({
-          query: ctx.get('selectedTopic')?.title || ctx.get('topics')?.[0]?.title || ctx.get('input'),
-          count: 5
+        input: (ctx) => ({
+          query:
+            ctx.get('selectedTopic')?.title ||
+            ctx.get('topics')?.[0]?.title ||
+            ctx.get('input'),
+          count: 5,
         }),
         output: 'searchResults',
-        timeout: 20000
+        timeout: 20000,
       },
-      ifFalse: { type: 'noop' }
+      ifFalse: { type: 'noop' },
     },
 
     // --------------------------------------------------
@@ -208,7 +301,7 @@ module.exports = {
     // 深入研究：文章角度、关键事实、写法提示、配图方向等
     // --------------------------------------------------
     {
-      type: 'research'
+      type: 'research',
     },
 
     // --------------------------------------------------
@@ -216,7 +309,7 @@ module.exports = {
     // 基于所有准备工作，生成完整的文章（带结构、带配图提示）
     // --------------------------------------------------
     {
-      type: 'write'
+      type: 'write',
     },
 
     // --------------------------------------------------
@@ -224,7 +317,7 @@ module.exports = {
     // 先打磨文字，再基于最终内容生成图片与排版
     // --------------------------------------------------
     {
-      type: 'polish'
+      type: 'polish',
     },
 
     // --------------------------------------------------
@@ -232,7 +325,7 @@ module.exports = {
     // 根据提示词，生成封面图和文中插图
     // --------------------------------------------------
     {
-      type: 'image-generate'
+      type: 'image-generate',
     },
 
     // --------------------------------------------------
@@ -240,7 +333,7 @@ module.exports = {
     // 把文章变成漂亮的 HTML/Markdown 格式，加上作者卡片和真实配图
     // --------------------------------------------------
     {
-      type: 'render-article'
+      type: 'render-article',
     },
 
     // --------------------------------------------------
@@ -248,7 +341,7 @@ module.exports = {
     // 优先发送 render-article 生成的 finalMarkdown，回退原 article
     // --------------------------------------------------
     {
-      type: 'publish'
+      type: 'publish',
     },
 
     // --------------------------------------------------
@@ -256,12 +349,12 @@ module.exports = {
     // 当前实现微信公众号草稿箱，保留头条号、百家号等扩展
     // --------------------------------------------------
     {
-      type: 'platform-publish'
+      type: 'platform-publish',
       // 可在 step 级别覆盖 env 默认值，例如：
       // platforms: [
       //   { type: 'wechat', enabled: true, appId: '', appSecret: '', author: '公众号编辑部' }
       // ]
-    }
+    },
   ],
 
   // ==========================================
@@ -270,5 +363,5 @@ module.exports = {
   // 'notify-and-dlq': 通知并写入死信队列，流程标记 failed
   // 'fail': 直接标记 failed（默认）
   // ==========================================
-  onError: 'pause'
+  onError: 'pause',
 }

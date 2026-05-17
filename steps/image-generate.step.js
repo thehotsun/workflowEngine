@@ -34,6 +34,12 @@
  * - 想用免费图库，需要配置 OPENVERSE_CLIENT_ID 和 OPENVERSE_CLIENT_SECRET（去 https://api.openverse.org/v1/auth_tokens/register/ 免费注册）。
  * - 想用 AI 生图兜底，需要配置 OPENAI_API_KEY。
  * - 两个都不配置时 step 不会报错，图片路径返回空，render-article 降级为占位符，但公众号草稿箱发布会失败（必须有封面图）。
+ *
+ * @workflow-config
+ * - 纯功能配置（API 密钥等）统一从 .env 读取，不在 workflow config 中覆盖
+ *
+ * @requires ['selectedTopic'] - 选定的话题
+ * @provides ['coverPrompt', 'inlineImages', 'coverImagePath', 'inlineImagePaths', 'imageNotes', 'photoSources'] - 图片生成结果
  */
 
 const fs = require('fs')

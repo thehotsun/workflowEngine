@@ -13,7 +13,10 @@ const retriever = require('../rag/retriever')
  * }
  *
  * @workflow-config
- * - _config.ragQuery.topK: 检索返回数量（被本 step 消费，stepDef.topK 优先级更高）
+ * - _config.ragQuery.topK: 检索返回数量（默认 5）
+ *
+ * @requires [] - 无依赖（通过 stepDef.input 接收查询）
+ * @provides ['ragResults'] - 知识库检索结果
  */
 class RagQueryStep extends BaseStep {
   get name() { return 'rag-query' }
@@ -31,7 +34,9 @@ class RagQueryStep extends BaseStep {
     const query = inputData.query
     if (!query) throw new Error('rag-query: query is required')
 
-    const topK = stepDef.topK || context.get('_config')?.ragQuery?.topK || 5
+    const config = context.get('_config') || {}
+    const stepConfig = config[this._configKey] || {}
+    const topK = stepConfig.topK || 5
     const chunks = await retriever.retrieve({ query, topK })
 
     return { ok: true, output: chunks }
