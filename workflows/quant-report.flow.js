@@ -24,8 +24,8 @@ module.exports = {
   },
 
   trigger: {
-    // 匹配关键词：量化日报
-    match: /^【量化/,
+    // 仅匹配手动触发的事件（通过 /events/manual webhook）
+    source: 'manual',
     // 也支持手动触发
     manual: true,
   },

@@ -19,11 +19,14 @@ const logger = require('../utils/logger')
 // 时间过滤和用户白名单暂不启用，未来按需在此扩展。
 function buildInterceptor(workflows) {
   return function shouldProcessMessage(event) {
-    const { text, userId, channelId } = event
+    const { text, userId, channelId, source } = event
     const matched = workflows.some(flow => {
       if (!flow.trigger) return false
       if (flow.trigger.type && flow.trigger.type !== event.triggerType) return false
+      if (flow.trigger.source && flow.trigger.source !== source) return false
       if (flow.trigger.match instanceof RegExp) return flow.trigger.match.test(text || '')
+      // source 匹配但无 match 条件，视为匹配（手动触发场景）
+      if (flow.trigger.source && flow.trigger.source === source) return true
       return false
     })
 
@@ -46,7 +49,9 @@ class WorkflowEngine {
     return this.workflows.find(flow => {
       if (!flow.trigger) return false
       if (flow.trigger.type && flow.trigger.type !== event.triggerType) return false
+      if (flow.trigger.source && flow.trigger.source !== event.source) return false
       if (flow.trigger.match instanceof RegExp) return flow.trigger.match.test(event.text || '')
+      if (flow.trigger.source && flow.trigger.source === event.source) return true
       return false
     })
   }
