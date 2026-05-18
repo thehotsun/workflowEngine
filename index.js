@@ -13,7 +13,7 @@ const { PORT, MAX_CONCURRENT_RUNS } = require('./config')
 // 注册所有 workflow 定义
 const workflows = [
   require('./workflows/article.flow'),
-  // require('./workflows/analysis.flow'), // 后续添加
+  require('./workflows/quant-report.flow'),
 ]
 
 const engine = new WorkflowEngine({ workflows })

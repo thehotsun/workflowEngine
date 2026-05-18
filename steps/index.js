@@ -7,7 +7,7 @@ const TransformStep = require('./transform.step')
 const NoopStep = require('./noop.step')
 const SkillProxyStep = require('./skill-proxy.step')
 const RagQueryStep = require('./rag-query.step')
-const TopicStep = require('./topic.step')
+const TopicStep = require('./select-topic.step')
 const HotspotStep = require('./hotspot.step')
 const WriteStep = require('./write.step')
 const PolishStep = require('./polish.step')
@@ -20,6 +20,7 @@ const FetchHotspotsStep = require('./fetch-hotspots.step')
 const RenderArticleStep = require('./render-article.step')
 const PlatformPublishStep = require('./platform-publish.step')
 const WebSearchStep = require('./web-search.step')
+const QuantReportStep = require('./quant-report.step')
 
 const STEP_REGISTRY = {
   'parallel':        (def, deps) => new ParallelStep({ steps: def.steps, ...deps }),
@@ -41,6 +42,7 @@ const STEP_REGISTRY = {
   'render-article':  (def, deps) => new RenderArticleStep(),
   'platform-publish': (def, deps) => new PlatformPublishStep(),
   'web-search':      (def, deps) => new WebSearchStep(),
+  'quant-report':    (def, deps) => new QuantReportStep(),
 }
 
 function buildStep(stepDef, deps = {}) {
