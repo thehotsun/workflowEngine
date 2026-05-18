@@ -4,18 +4,18 @@ const BaseStep = require('./base.step')
 const https = require('https')
 
 /**
- * fetch-hotspots step - 抓取热点（微博、头条、百度）
+ * fetch-hotspots step - 抓取热点（微博、头条、百度、抖音、B站）
  *
  * @workflow-config
  * - _config.fetchHotspots.limitPerSource: 每个来源抓取数量（默认 10）
- * - _config.fetchHotspots.enabledSources: 启用的来源（默认 ['weibo', 'toutiao', 'baidu']）
+ * - _config.fetchHotspots.enabledSources: 启用的来源（默认 ['weibo', 'toutiao', 'baidu', 'douyin', 'bilibili']）
  *
  * @requires [] - 无依赖
  * @provides ['hotspots'] - 热点列表
  */
 class FetchHotspotsStep extends BaseStep {
   get name() { return 'fetch-hotspots' }
-  get description() { return '实时抓取微博/头条/百度热搜，输出标准化热点列表（真实 API，失败自动降级为样本数据）' }
+  get description() { return '实时抓取微博/头条/百度/抖音/B站热搜，输出标准化热点列表（真实 API，失败自动降级为样本数据）' }
   get category() { return 'data-fetch' }
   get timeout() { return 30000 }
   get retryable() { return true }
@@ -197,10 +197,56 @@ class FetchHotspotsStep extends BaseStep {
     }
   }
 
+  async _fetchDouyin(limit) {
+    try {
+      const data = await this._fetchWithRetry('https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/')
+      const wordList = data?.word_list || []
+      if (!Array.isArray(wordList)) return []
+
+      const items = []
+      for (const item of wordList.slice(0, limit)) {
+        const title = String(item.word || '').trim()
+        if (!title) continue
+        items.push({
+          title,
+          hotness: Number(item.hot_value || 0),
+          source: 'douyin',
+          url: ''
+        })
+      }
+      return items
+    } catch {
+      return []
+    }
+  }
+
+  async _fetchBilibili(limit) {
+    try {
+      const data = await this._fetchWithRetry('https://api.bilibili.com/x/web-interface/search/square?limit=' + limit)
+      const trending = data?.data?.trending?.list || []
+      if (!Array.isArray(trending)) return []
+
+      const items = []
+      for (const item of trending.slice(0, limit)) {
+        const title = String(item.keyword || '').trim()
+        if (!title) continue
+        items.push({
+          title,
+          hotness: Number(item.hot_id || 0),
+          source: 'bilibili',
+          url: ''
+        })
+      }
+      return items
+    } catch {
+      return []
+    }
+  }
+
   async execute(context, stepDef) {
     const config = context.get('_config')?.fetchHotspots || {}
     const limit = config.limitPerSource || 10
-    const enabledSources = config.enabledSources || ['weibo', 'toutiao', 'baidu']
+    const enabledSources = config.enabledSources || ['weibo', 'toutiao', 'baidu', 'douyin', 'bilibili']
     const demo = config.demo || false
 
     if (demo) {
@@ -228,6 +274,10 @@ class FetchHotspotsStep extends BaseStep {
           items.push(...(await this._fetchToutiao(limit)))
         } else if (source === 'baidu') {
           items.push(...(await this._fetchBaidu(limit)))
+        } else if (source === 'douyin') {
+          items.push(...(await this._fetchDouyin(limit)))
+        } else if (source === 'bilibili') {
+          items.push(...(await this._fetchBilibili(limit)))
         }
       } catch {
         // 单个来源失败不影响其他来源
