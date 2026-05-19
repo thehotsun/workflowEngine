@@ -133,7 +133,7 @@ class WorkflowEngine {
       // ✅ 流程完成通知
       try {
         const notifyChannelId = context.get('channelId')
-        if (notifyChannelId) {
+        if (notifyChannelId && workflow.notifyOnComplete !== false) {
           const workflowName = workflow.name || workflow.id || '未知流程'
           const notifyContent = `✅ 流程「${workflowName}」已完成`
           const notifyMsgId = enqueueMessage({ runId, channelId: notifyChannelId, content: notifyContent })
@@ -515,10 +515,12 @@ class WorkflowEngine {
         // ✅ 流程完成通知
         try {
           const notifyChannelId = context.get('channelId') || channelId
-          const workflowName = workflow.name || workflow.id || '未知流程'
-          const notifyContent = `✅ 流程「${workflowName}」已完成`
-          const notifyMsgId = enqueueMessage({ runId: waitingRun.id, channelId: notifyChannelId, content: notifyContent })
-          outboxEmitter.emit('new_message', { msgId: notifyMsgId, runId: waitingRun.id })
+          if (notifyChannelId && workflow.notifyOnComplete !== false) {
+            const workflowName = workflow.name || workflow.id || '未知流程'
+            const notifyContent = `✅ 流程「${workflowName}」已完成`
+            const notifyMsgId = enqueueMessage({ runId: waitingRun.id, channelId: notifyChannelId, content: notifyContent })
+            outboxEmitter.emit('new_message', { msgId: notifyMsgId, runId: waitingRun.id })
+          }
         } catch (notifyErr) {
           logger.warn({ runId: waitingRun.id, err: notifyErr.message }, '完成通知发送失败')
         }

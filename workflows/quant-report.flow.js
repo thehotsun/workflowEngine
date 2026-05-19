@@ -23,6 +23,9 @@ module.exports = {
     targetChannelId: 'qqbot:c2c:671E406CE85706E91F0CF251BD7D8177',
   },
 
+  // 推送流程不需要完成通知（报告本身就是通知）
+  notifyOnComplete: false,
+
   trigger: {
     // 仅匹配手动触发的事件（通过 /events/manual webhook）
     source: 'manual',
