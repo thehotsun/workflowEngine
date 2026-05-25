@@ -633,45 +633,32 @@ class ImageGenerateStep extends BaseStep {
     const source = String(text || '')
     const queries = []
 
-    // 中英混合搜索，提高匹配精度
-    // 加 'chinese' 或 'asian' 前缀确保返回亚洲面孔
-    const asian = 'chinese'
-
     if (['夫妻', '婚姻', '老伴'].some(token => source.includes(token))) {
-      queries.push(`${asian} senior couple at home`, `${asian} elderly couple conversation`, `older ${asian} couple living room`)
+      queries.push('asian senior couple at home', 'senior couple conversation at home', 'older couple living room')
     }
     if (['家庭', '子女', '儿女', '代际'].some(token => source.includes(token))) {
-      queries.push(`${asian} senior family at home`, `${asian} parents and adult child`, `${asian} family conversation`)
+      queries.push('asian senior family at home', 'older parents and adult child at home', 'family conversation at home')
     }
-    if (source.includes('婆媳')) queries.push(`${asian} family women conversation`, `${asian} mother daughter at home`, `${asian} senior family kitchen`)
+    if (source.includes('婆媳')) queries.push('family women conversation at home', 'mother and adult daughter at home', 'senior family kitchen')
     if (['手机', '电话', '诈骗', '反诈', '消息'].some(token => source.includes(token))) {
-      queries.push(`${asian} senior using smartphone`, `${asian} elderly phone call`, `${asian} senior checking phone`)
+      queries.push('senior using smartphone at home', 'older adult phone call at home', 'senior checking phone message')
     }
     if (['看病', '医保', '医院', '门诊', '医生'].some(token => source.includes(token))) {
-      queries.push(`${asian} senior patient doctor`, `${asian} elderly medical paperwork`, `${asian} senior clinic`)
+      queries.push('senior patient consultation', 'older adult medical paperwork', 'senior clinic waiting room')
     }
     if (['出门', '踏青', '外出', '旅行'].some(token => source.includes(token))) {
-      queries.push(`${asian} senior going out`, `${asian} elderly walking outdoors`, `${asian} senior travel`)
+      queries.push('senior getting ready to go out', 'older adult walking outdoors', 'senior travel preparation')
     }
     if (['睡眠', '失眠', '夜里', '总醒'].some(token => source.includes(token))) {
-      queries.push(`${asian} senior resting at home`, `${asian} elderly sitting on bed`, `${asian} senior bedroom`)
+      queries.push('senior resting at home', 'older adult sitting on bed', 'senior bedroom routine')
     }
     if (['退休', '花钱', '钱', '存款'].some(token => source.includes(token))) {
-      queries.push(`${asian} retired couple discussion`, `${asian} senior planning expenses`, `${asian} elderly home finances`)
-    }
-    if (['健康', '养生', '运动'].some(token => source.includes(token))) {
-      queries.push(`${asian} senior health exercise`, `${asian} elderly morning walk`, `${asian} senior fitness`)
+      queries.push('retired couple home discussion', 'senior couple planning expenses', 'older adult home finances')
     }
 
-    // 兜底搜索词
-    if (slot === 'cover') queries.push(`${asian} senior lifestyle home`, `${asian} elderly portrait warm`)
-    else if (slot === 'before_ending') queries.push(`${asian} senior family warm`, `${asian} elderly couple walking`)
-    else queries.push(`${asian} senior home conversation`, `${asian} elderly daily life`)
-
-    // 如果仍然没有匹配，用通用搜索词
-    if (queries.length === 0) {
-      queries.push(`${asian} senior home`, `${asian} elderly family`, `${asian} older adult`)
-    }
+    if (slot === 'cover') queries.push('senior lifestyle home', 'older adult portrait home')
+    else if (slot === 'before_ending') queries.push('senior family warm moment', 'older couple walking together')
+    else queries.push('senior home conversation', 'older adult daily life home')
 
     queries.push('asian senior lifestyle home', 'senior lifestyle photo')
     return unique(queries)
