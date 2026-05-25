@@ -9,6 +9,8 @@
     "dev": "node --watch index.js",
     "ingest": "node rag/ingest.js",
     "step-guide:sync": "node scripts/update-step-guide.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
     "pm2:start": "pm2 start ecosystem.config.js --env production",
     "pm2:stop": "pm2 stop workflow-engine",
     "pm2:restart": "pm2 restart workflow-engine",
@@ -33,5 +35,8 @@
       "better-sqlite3",
       "sqlite-vec"
     ]
+  },
+  "devDependencies": {
+    "jest": "^30.4.2"
   }
 }
