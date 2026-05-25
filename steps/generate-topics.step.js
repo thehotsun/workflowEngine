@@ -136,10 +136,19 @@ class GenerateTopicsStep extends BaseStep {
       content = modelContent
 
       try {
-        const jsonStr = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
+        // 修复常见 JSON 格式问题
+        let jsonStr = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
+        // 修复尾逗号
+        jsonStr = jsonStr.replace(/,\s*([}\]])/g, '$1')
+        // 修复单引号
+        jsonStr = jsonStr.replace(/'/g, '"')
+
         const parsed = JSON.parse(jsonStr)
         styleBrief = Array.isArray(parsed.styleBrief) ? parsed.styleBrief : []
         topics = Array.isArray(parsed.topics) ? parsed.topics : []
+
+        // 校验 topics 必填字段
+        topics = topics.filter(t => t && typeof t === 'object' && t.title)
       } catch {
         ;({ topics, styleBrief } = this._fallback(
           input,
