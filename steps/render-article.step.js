@@ -1,6 +1,7 @@
 'use strict'
 
 const BaseStep = require('./base.step')
+const logger = require('../utils/logger')
 
 /**
  * render-article step - 渲染文章为 HTML 和 Markdown 格式
@@ -216,27 +217,36 @@ class RenderArticleStep extends BaseStep {
 
   async execute(context) {
     const articleData = context.get('articleData')
-    const config = context.get('_config') || {}
-    const accountProfile = config.accountProfile || {}
-    const imageGenerateConfig = config.imageGenerate || {}
-    const enabledSlots = new Set(imageGenerateConfig.enabledSlots || ['after_lead', 'after_section_1', 'after_section_2', 'before_ending'])
-    const coverImagePath = context.get('coverImagePath') || null
-    const inlineImagePaths = context.get('inlineImagePaths') || {}
-    const assetSlots = { ...inlineImagePaths }
-    if (coverImagePath) assetSlots.cover = coverImagePath
+    if (!articleData) {
+      throw new Error('render-article: no articleData in context')
+    }
 
-    const { finalHtml, finalMarkdown } = this._renderArticle(articleData, enabledSlots, accountProfile, assetSlots)
-    const images = this._extractImages(articleData, enabledSlots, assetSlots)
+    try {
+      const config = context.get('_config') || {}
+      const accountProfile = config.accountProfile || {}
+      const imageGenerateConfig = config.imageGenerate || {}
+      const enabledSlots = new Set(imageGenerateConfig.enabledSlots || ['after_lead', 'after_section_1', 'after_section_2', 'before_ending'])
+      const coverImagePath = context.get('coverImagePath') || null
+      const inlineImagePaths = context.get('inlineImagePaths') || {}
+      const assetSlots = { ...inlineImagePaths }
+      if (coverImagePath) assetSlots.cover = coverImagePath
 
-    return {
-      ok: true,
-      output: {
-        finalMarkdown,
-        finalHtml,
-        images,
-        coverImagePath,
-        inlineImagePaths
+      const { finalHtml, finalMarkdown } = this._renderArticle(articleData, enabledSlots, accountProfile, assetSlots)
+      const images = this._extractImages(articleData, enabledSlots, assetSlots)
+
+      return {
+        ok: true,
+        output: {
+          finalMarkdown,
+          finalHtml,
+          images,
+          coverImagePath,
+          inlineImagePaths
+        }
       }
+    } catch (err) {
+      logger.error({ err, articleData }, 'render-article failed')
+      throw new Error(`render-article: ${err.message}`)
     }
   }
 }

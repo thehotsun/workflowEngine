@@ -43,16 +43,21 @@ class SkillProxyStep extends BaseStep {
     const toolName = skillName === 'web-search' ? 'web_search' : skillName
     const action = skillName === 'web-search' ? 'search' : stepDef.action
 
-    const result = await openclawClient.invokeTool(toolName, inputData, {
-      action,
-      sessionKey: stepDef.sessionKey,
-      timeoutMs: stepDef.timeout || this.timeout,
-      dryRun: stepDef.dryRun
-    })
+    try {
+      const result = await openclawClient.invokeTool(toolName, inputData, {
+        action,
+        sessionKey: stepDef.sessionKey,
+        timeoutMs: stepDef.timeout || this.timeout,
+        dryRun: stepDef.dryRun
+      })
 
-    logger.info({ skill: skillName, success: !!result }, `✅ Skill 调用完成：${skillName}`)
+      logger.info({ skill: skillName, success: !!result }, `✅ Skill 调用完成：${skillName}`)
 
-    return { ok: true, output: result }
+      return { ok: true, output: result }
+    } catch (err) {
+      logger.error({ err, skill: skillName, input: inputData }, `❌ Skill 调用失败：${skillName}`)
+      throw new Error(`skill-proxy[${skillName}]: ${err.message}`)
+    }
   }
 }
 

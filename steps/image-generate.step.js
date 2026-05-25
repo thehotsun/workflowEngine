@@ -523,7 +523,7 @@ class ImageGenerateStep extends BaseStep {
       })).filter(item => item.url || item.fallbackUrl);
 
     } catch (error) {
-      console.error('Failed to fetch from Openverse:', error);
+      logger.error({ err: error }, 'Failed to fetch from Openverse');
       // 返回空数组作为失败的降级方案
       return [];
     }
