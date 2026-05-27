@@ -21,6 +21,7 @@ function buildInterceptor(workflows) {
   return function shouldProcessMessage(event) {
     const { text, userId, channelId, source } = event
     const matched = workflows.some(flow => {
+      if (flow.enabled === false) return false
       if (!flow.trigger) return false
       if (flow.trigger.type && flow.trigger.type !== event.triggerType) return false
       if (flow.trigger.source && flow.trigger.source !== source) return false
@@ -47,6 +48,7 @@ class WorkflowEngine {
 
   matchWorkflow(event) {
     return this.workflows.find(flow => {
+      if (flow.enabled === false) return false
       if (!flow.trigger) return false
       if (flow.trigger.type && flow.trigger.type !== event.triggerType) return false
       if (flow.trigger.source && flow.trigger.source !== event.source) return false

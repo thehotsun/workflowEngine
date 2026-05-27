@@ -6,27 +6,58 @@ const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('./outbox-worker')
 const logger = require('../utils/logger')
 
-// ── 英文命令（. 或 / 前缀均可；. 在九宫格主键盘无需切换）───────
-const CMD_HELP_RE       = /^[/.]help$/i
-const CMD_LIST_RE       = /^[/.]list$/i
-const CMD_CANCEL_ALL_RE = /^[/.]cancel\s+all$/i
-const CMD_CANCEL_RE     = /^[/.]cancel(\s|$)/i     // .cancel .cancel 1 .cancel run_xxx
-const CMD_RESUME_RE     = /^[/.]resume/i           // .resume .resume 1 .resume run_xxx
+// ── 英文命令(. 或 / 前缀均可;. 在九宫格主键盘无需切换)───────
+const CMD_HELP_RE       = /^[/.]workflow_help$/i
+const CMD_LIST_RE       = /^[/.]workflow_list$/i
+const CMD_CANCEL_ALL_RE = /^[/.]workflow_cancel\s+all$/i
+const CMD_CANCEL_RE     = /^[/.]workflow_cancel(\s|$)/i
+const CMD_RESUME_RE     = /^[/.]workflow_resume/i
 
-// ── 中文命令（收紧匹配，减少误触）─────────────────────────────────
+// ── 中文命令(收紧匹配,减少误触)─────────────────────────────────
 const HELP_RE          = /^(帮助|help)$/i
 const LIST_PAUSED_RE   = /^查看\s*(中断|暂停|等待|流程)/i
 const RESUME_RE        = /^恢复(\s*(流程|[1-9]\d*|run_[a-z0-9]+))?$/i
 const CANCEL_RE        = /^(取消|删除)(\s*(流程|[1-9]\d*|run_[a-z0-9]+))?$/i
+
+// OpenClaw 系统命令列表（不含引擎自己的 .workflow_help/.workflow_list/.workflow_cancel/.workflow_resume）
+// 来源:openclaw docs/tools/slash-commands.md
+const OPENCLAW_COMMANDS = new Set([
+  // 核心命令
+  'new', 'reset', 'compact', 'stop', 'session',
+  'think', 'thinking', 't',
+  'verbose', 'v', 'trace', 'fast',
+  'reasoning', 'reason', 'elevated', 'elev',
+  'exec', 'model', 'models', 'queue',
+  'help', 'commands', 'tools', 'status',
+  'tasks', 'context', 'export-session', 'export',
+  'whoami', 'id', 'skill',
+  'allowlist', 'approve', 'btw',
+  'subagents', 'acp', 'focus', 'unfocus', 'agents',
+  'kill', 'steer', 'tell',
+  'config', 'mcp', 'plugins', 'plugin', 'debug',
+  'usage', 'tts', 'restart', 'activation', 'send',
+  'bash',
+  // 插件命令
+  'dreaming', 'pair', 'phone', 'voice', 'card', 'codex',
+  // QQBot
+  'bot-ping', 'bot-version', 'bot-help', 'bot-upgrade', 'bot-logs',
+])
+
+function _isOpenClawCommand(text) {
+  const match = text.match(/^\/?([a-z][a-z0-9_-]*)/i)
+  if (!match) return false
+  const cmd = match[1].toLowerCase()
+  return OPENCLAW_COMMANDS.has(cmd)
+}
 const CANCEL_ALL_RE    = /^(取消|删除)\s*(全部|所有|all)/i
 
 /**
  * 从文本中解析操作人指定的 runId
- * 支持两种格式：
+ * 支持两种格式:
  *   - run_xxx  → 直接返回该 runId 字符串
- *   - 纯数字 N → 取 runs 列表第 N 项（1-based）的 runId
+ *   - 纯数字 N → 取 runs 列表第 N 项(1-based)的 runId
  * @param {string} text
- * @param {Array}  runs - engine.getWaitingRuns() 返回的列表（已排序）
+ * @param {Array}  runs - engine.getWaitingRuns() 返回的列表(已排序)
  * @returns {string|null}
  */
 function resolveTargetRun(text, runs) {
@@ -50,13 +81,13 @@ function sendPausedList(channelId, runs, enqueue) {
     outboxEmitter.emit('new_message', { msgId, runId: null })
     return
   }
-  const lines = ['当前中断的流程：']
+  const lines = ['当前中断的流程:']
   runs.forEach((r, i) => {
     const ts = new Date(r.createdAt).toLocaleString('zh-CN', { hour12: false })
-    const reason = r.pauseReason ? `\n   原因：${r.pauseReason}` : ''
-    lines.push(`${i + 1}. [${r.workflowName}] 卡在步骤「${r.stepName || '?'}」 (${ts})${reason}\n   runId：${r.runId}`)
+    const reason = r.pauseReason ? `\n   原因:${r.pauseReason}` : ''
+    lines.push(`${i + 1}. [${r.workflowName}] 卡在步骤「${r.stepName || '?'}」 (${ts})${reason}\n   runId:${r.runId}`)
   })
-  lines.push('\n回复 .resume 1 恢复，.cancel 1 取消，.cancel all 清空，.help 查看命令。')
+  lines.push('\n回复 .workflow_resume 1 恢复,.workflow_cancel 1 取消,.workflow_cancel all 清空,.workflow_help 查看命令。')
   const content = lines.join('\n')
   const msgId = enqueue({ runId: null, channelId, content })
   outboxEmitter.emit('new_message', { msgId, runId: null })
@@ -83,26 +114,26 @@ async function eventsRoutes(fastify, opts) {
     const text = event.text || ''
     const channelId = event.channelId
 
-    // ── 0. 操作人指令：帮助（.help / 帮助）─────────────────────────
+    // ── 0. 操作人指令：帮助（.workflow_help / 帮助）────────────────
     if (text && (HELP_RE.test(text) || CMD_HELP_RE.test(text))) {
       logger.info({ channelId }, '📖 帮助指令')
       const helpContent = [
-        '📖 可用命令（. 和 / 等效，九宫格推荐用 .）',
+        '📖 可用命令(. 和 / 等效,九宫格推荐用 .)',
         '',
-        '  .list        查看暂停的流程',
-        '  .resume 1    恢复第 1 个流程',
-        '  .cancel 1    取消第 1 个流程',
-        '  .cancel all  取消全部暂停的流程',
-        '  .help        显示此帮助',
+        '  .workflow_list        查看暂停的流程',
+        '  .workflow_resume 1    恢复第 1 个流程',
+        '  .workflow_cancel 1    取消第 1 个流程',
+        '  .workflow_cancel all  取消全部暂停的流程',
+        '  .workflow_help        显示此帮助',
         '',
-        '中文命令：恢复 1 | 取消 1 | 取消全部 | 查看流程 | 帮助',
+        '中文命令:恢复 1 | 取消 1 | 取消全部 | 查看流程 | 帮助',
       ].join('\n')
       const msgId = enqueueMessage({ runId: null, channelId, content: helpContent })
       outboxEmitter.emit('new_message', { msgId, runId: null })
       return reply.code(200).send({ ok: true, eventId: null, handled: 'help' })
     }
 
-    // ── 1. 操作人指令：查看中断流程（.list / 查看流程）────────────
+    // ── 1. 操作人指令：查看中断流程（.workflow_list / 查看流程）────
     if (text && (LIST_PAUSED_RE.test(text) || CMD_LIST_RE.test(text))) {
       logger.info({ channelId, text: text.slice(0, 50) }, '📋 查看中断流程指令')
       const runs = engine.getWaitingRuns(channelId)
@@ -110,7 +141,7 @@ async function eventsRoutes(fastify, opts) {
       return reply.code(200).send({ ok: true, eventId: null, handled: 'list_paused' })
     }
 
-    // ── 1.5. 操作人指令：取消全部（.cancel all / 取消全部）────────
+    // ── 1.5. 操作人指令：取消全部（.workflow_cancel all / 取消全部）────
     if (text && (CANCEL_ALL_RE.test(text) || CMD_CANCEL_ALL_RE.test(text))) {
       logger.info({ channelId, text: text.slice(0, 50) }, '🗑️ 取消全部流程指令')
       const runs = engine.getWaitingRuns(channelId)
@@ -130,7 +161,7 @@ async function eventsRoutes(fastify, opts) {
       return reply.code(200).send({ ok: true, eventId: null, handled: 'cancel_all' })
     }
 
-    // ── 2. 操作人指令：取消/删除中断流程（.cancel / 取消）─────────
+    // ── 2. 操作人指令：取消/删除中断流程（.workflow_cancel / 取消）─────
     if (text && (CANCEL_RE.test(text) || CMD_CANCEL_RE.test(text))) {
       logger.info({ channelId, text: text.slice(0, 50) }, '🗑️ 取消流程指令')
       const runs = engine.getWaitingRuns(channelId)
@@ -139,25 +170,25 @@ async function eventsRoutes(fastify, opts) {
         const ok = engine.cancelRun(targetRunId)
         const content = ok
           ? `流程 ${targetRunId} 已取消。`
-          : `未找到可取消的流程 ${targetRunId}（可能已完成或不存在）。`
+          : `未找到可取消的流程 ${targetRunId}(可能已完成或不存在)。`
         const msgId = enqueueMessage({ runId: null, channelId, content })
         outboxEmitter.emit('new_message', { msgId, runId: null })
         logger.info({ channelId, runId: targetRunId, ok }, '🗑️ Cancel run result')
         return reply.code(200).send({ ok: true, eventId: null, handled: 'cancel_run', cancelled: ok })
       }
-      // 没有 runId：先列出，提示用户指定
+      // 没有 runId:先列出,提示用户指定
       if (!runs.length) {
         const msgId = enqueueMessage({ runId: null, channelId, content: '当前没有中断的流程可以取消。' })
         outboxEmitter.emit('new_message', { msgId, runId: null })
       } else {
         sendPausedList(channelId, runs, enqueueMessage)
-        const hint = enqueueMessage({ runId: null, channelId, content: '请回复 .cancel 1 或 .cancel run_xxx 指定要取消的流程。' })
+        const hint = enqueueMessage({ runId: null, channelId, content: '请回复 .workflow_cancel 1 或 .workflow_cancel run_xxx 指定要取消的流程。' })
         outboxEmitter.emit('new_message', { msgId: hint, runId: null })
       }
       return reply.code(200).send({ ok: true, eventId: null, handled: 'cancel_needs_runid' })
     }
 
-    // ── 3. 操作人指令：恢复指定（或最新）中断流程（.resume / 恢复）─
+    // ── 3. 操作人指令：恢复指定（或最新）中断流程（.workflow_resume / 恢复）─
     if (text && (RESUME_RE.test(text) || CMD_RESUME_RE.test(text))) {
       logger.info({ channelId, text: text.slice(0, 50) }, '▶️ 恢复流程指令')
       const runs = engine.getWaitingRuns(channelId)
@@ -167,14 +198,19 @@ async function eventsRoutes(fastify, opts) {
         logger.info({ channelId, runId: resumedRunId }, '▶️ Workflow operator-resumed')
         return reply.code(200).send({ ok: true, eventId: null, resumedRunId, handled: 'operator_resume' })
       }
-      // 没有可恢复的流程，告知用户，仍拦截不转给 openclaw
+      // 没有可恢复的流程,告知用户,仍拦截不转给 openclaw
       const msgId = enqueueMessage({ runId: null, channelId, content: '当前没有中断的流程可以恢复。' })
       outboxEmitter.emit('new_message', { msgId, runId: null })
       return reply.code(200).send({ ok: true, eventId: null, handled: 'no_waiting_run' })
     }
 
-    // ── 4. 普通文本：检查是否有 user_input 类型的 waiting run ──────
+    // ── 4. 普通文本:检查是否有 user_input 类型的 waiting run ──────
     if (text) {
+      // 以 / 开头的是 OpenClaw 系统命令,不作为工作流用户输入
+      if (text.startsWith('/') && _isOpenClawCommand(text)) {
+        logger.info({ channelId, text: text.slice(0, 30) }, '⏭️ 系统命令,不作为工作流用户输入,交还 openclaw')
+        return reply.code(200).send({ ok: true, eventId: null, reason: 'system_command' })
+      }
       const waitingRuns = engine.getWaitingRuns(channelId)
       const userInputRun = waitingRuns.find(r => r.waitType === 'user_input')
       if (userInputRun) {
@@ -186,14 +222,14 @@ async function eventsRoutes(fastify, opts) {
       }
     }
 
-    // ── 5. 检查是否能触发新流程（拦截器） ────────────────────────────
+    // ── 5. 检查是否能触发新流程(拦截器) ────────────────────────────
     const interceptResult = engine.shouldProcessMessage(event)
     if (!interceptResult.allowed) {
-      logger.info({ channelId, reason: interceptResult.reason }, '⏭️ 消息不进入引擎，交还 openclaw')
+      logger.info({ channelId, reason: interceptResult.reason }, '⏭️ 消息不进入引擎,交还 openclaw')
       return reply.code(200).send({ ok: true, eventId: null, reason: interceptResult.reason })
     }
 
-    // ── 6. 进入 event inbox，触发新流程 ─────────────────────────────
+    // ── 6. 进入 event inbox,触发新流程 ─────────────────────────────
     const eventId = createEvent({
       source: event.source,
       sourceEventId: event.sourceEventId,
@@ -205,7 +241,7 @@ async function eventsRoutes(fastify, opts) {
     return reply.code(202).send({ ok: true, eventId })
   })
 
-  // 手动触发（调试用）
+  // 手动触发(调试用)
   fastify.post('/events/manual', async (request, reply) => {
     if (!verifyWebhookAuth(request.headers || {})) {
       logger.warn('Manual trigger auth failed')

@@ -27,6 +27,7 @@
 module.exports = {
   // 流程唯一标识（内部使用，不用管）
   id: 'article_flow',
+  enabled: true,  // 2026-05-27 恢复启用
 
   // 流程名称
   name: '公众号文章生成',

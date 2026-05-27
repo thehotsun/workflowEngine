@@ -145,12 +145,12 @@ index.js start()
 
 | 优先级 | 匹配条件 | 行为 | 是否转 openclaw |
 |---|---|---|---|
-| 0 | `.help` / `/help` / `帮助` / `help` | 发送帮助信息 | 不转 |
-| 1 | `.list` / `/list` / `查看[中断\|暂停\|等待\|流程]` | `engine.getWaitingRuns` → outbox 发列表 | 不转 |
-| 2 | `.cancel all` / `/cancel all` / `取消全部` / `删除全部` | 取消该 channel 下所有 waiting run | 不转 |
-| 3 | `.cancel <N>` / `.cancel run_xxx` / `/cancel <N>` / `取消 N` / `删除 N` | 有 runId 或序号 → `engine.cancelRun`；无 → 发列表提示指定 | 不转 |
-| 4 | `.resume <N>` / `.resume run_xxx` / `/resume <N>` / `恢复 N` | `engine.resumeRun`（支持 run_xxx 或序号；不带参数恢复最新） | 不转 |
-| 5 | 存在 `waitType=user_input` 的 waiting run | `engine.resumeRun` 以当前文本作为 userReply | 不转 |
+| 0 | `.workflow_help` / `/workflow_help` / `帮助` / `help` | 发送帮助信息 | 不转 |
+| 1 | `.workflow_list` / `/workflow_list` / `查看[中断\|暂停\|等待\|流程]` | `engine.getWaitingRuns` → outbox 发列表 | 不转 |
+| 2 | `.workflow_cancel all` / `/workflow_cancel all` / `取消全部` / `删除全部` | 取消该 channel 下所有 waiting run | 不转 |
+| 3 | `.workflow_cancel <N>` / `.workflow_cancel run_xxx` / `/workflow_cancel <N>` / `取消 N` / `删除 N` | 有 runId 或序号 → `engine.cancelRun`；无 → 发列表提示指定 | 不转 |
+| 4 | `.workflow_resume <N>` / `.workflow_resume run_xxx` / `/workflow_resume <N>` / `恢复 N` | `engine.resumeRun`（支持 run_xxx 或序号；不带参数恢复最新） | 不转 |
+| 5 | 存在 `waitType=user_input` 的 waiting run（`/` 开头的 OpenClaw 系统命令会被过滤，不作为用户输入） | `engine.resumeRun` 以当前文本作为 userReply | 不转 |
 | 6 | 能被任意 workflow `trigger.match` 匹配 | createEvent → event inbox | 不转 |
 | 7 | 以上均不命中 | 返回 `eventId: null` | **转给 openclaw** |
 
@@ -160,13 +160,13 @@ index.js start()
 
 | 方式 | 示例 | 特点 |
 |---|---|---|
-| `.` 前缀 | `.list` `.cancel 1` `.resume 1` `.help` | 九宫格输入法主键盘直接可打，无需切换 |
-| `/` 前缀 | `/list` `/cancel 1` `/resume 1` `/help` | 传统斜杠命令，兼容保留 |
+| `.` 前缀 | `.workflow_list` `.workflow_cancel 1` `.workflow_resume 1` `.workflow_help` | 九宫格输入法主键盘直接可打，无需切换 |
+| `/` 前缀 | `/workflow_list` `/workflow_cancel 1` `/workflow_resume 1` `/workflow_help` | 传统斜杠命令，兼容保留 |
 | 中文 | `查看流程` `取消 1` `恢复 1` `帮助` | 自然语言，正则严格锚定开头避免误触 |
 
 ### 3.6.2 关键约束
 
-- `waitType=operator_resume` 的流程不会被规则 5 意外唤醒，必须由操作人显式发 `恢复` / `.resume` / `/resume` 指令触发。
+- `waitType=operator_resume` 的流程不会被规则 5 意外唤醒，必须由操作人显式发 `恢复` / `.workflow_resume` / `/workflow_resume` 指令触发。
 - 所有命令正则均锚定文本开头（`^`），避免普通对话中误触发（如"系统恢复了吗"不会命中恢复指令）。
 
 ---
@@ -466,14 +466,14 @@ step 返回 `{ _wait: true }` 时 run 进入 `waiting`，context 中额外保存
 - `_waitStepName`：可读 step 名称
 - `_waitType`：等待类型，决定恢复触发方式
   - `user_input`：等待普通用户文字输入（如选主题），任意普通消息即可恢复
-  - `operator_resume`：等待操作人人工介入（如生图 401），必须发 `.resume` / `/resume` / `恢复` 指令才能恢复，普通消息不会意外触发
+  - `operator_resume`：等待操作人人工介入（如生图 401），必须发 `.workflow_resume` / `/workflow_resume` / `恢复` 指令才能恢复，普通消息不会意外触发
 - `_pauseReason`：暂停原因文本，用于中断列表展示
 
 操作人可以：
-- 发 `.list` / `/list` / `查看流程` 查看所有 waiting run
-- 发 `.resume 1` / `.resume run_xxx` / `恢复 1` 恢复指定或最新 waiting run（序号来自列表顺序）
-- 发 `.cancel 1` / `.cancel run_xxx` / `取消 1` 将指定 waiting run 标记为 failed（不可撤销）
-- 发 `.cancel all` / `取消全部` 取消所有 waiting run
+- 发 `.workflow_list` / `/workflow_list` / `查看流程` 查看所有 waiting run
+- 发 `.workflow_resume 1` / `.workflow_resume run_xxx` / `恢复 1` 恢复指定或最新 waiting run（序号来自列表顺序）
+- 发 `.workflow_cancel 1` / `.workflow_cancel run_xxx` / `取消 1` 将指定 waiting run 标记为 failed（不可撤销）
+- 发 `.workflow_cancel all` / `取消全部` 取消所有 waiting run
 
 ## 6.3 Step 执行生命周期
 
