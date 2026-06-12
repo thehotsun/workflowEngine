@@ -49,6 +49,7 @@ const OpenAI = require('openai')
 const BaseStep = require('./base.step')
 const config = require('../config')
 const logger = require('../utils/logger')
+const modelRouter = require('../models/router')
 const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('../trigger/outbox-worker')
 // 使用 Node.js 22 原生 fetch（undici v8 的 fetch 对某些 CDN 返回 HTML）
@@ -346,7 +347,7 @@ class ImageGenerateStep extends BaseStep {
     const freePhoto = await this._freePhotoConfig()
     if (freePhoto.enabled) {
       try {
-        const queries = this._buildPhotoQueries(`${articleData.title || ''} ${coverPrompt}`, 'cover')
+        const queries = await this._buildPhotoQueries(`${articleData.title || ''} ${coverPrompt}`, 'cover')
         const result = await this._fetchFreePhoto({
           queries,
           slot: 'cover',
@@ -378,7 +379,7 @@ class ImageGenerateStep extends BaseStep {
     const freePhoto = await this._freePhotoConfig()
     if (freePhoto.enabled) {
       try {
-        const queries = this._buildPhotoQueries(`${articleData.title || ''} ${prompt} ${caption}`, slot)
+        const queries = await this._buildPhotoQueries(`${articleData.title || ''} ${prompt} ${caption}`, slot)
         const result = await this._fetchFreePhoto({
           queries,
           slot,
@@ -547,16 +548,11 @@ class ImageGenerateStep extends BaseStep {
       signal: AbortSignal.timeout(timeout)
     })
     if (!res.ok) throw new Error(`download image failed: ${res.status}`)
-
-    // 拒绝 WebP 格式，公众号不支持
-    const contentType = String(res.headers.get('content-type') || '').toLowerCase()
-    if (contentType.includes('webp')) throw new Error('skip webp image')
-
     const buffer = Buffer.from(await res.arrayBuffer())
     if (!buffer.length) throw new Error('downloaded image is empty')
 
     ensureDir(path.dirname(outputPath))
-    const finalPath = outputPath.replace(path.extname(outputPath), guessExtension(url, contentType))
+    const finalPath = outputPath.replace(path.extname(outputPath), guessExtension(url, res.headers.get('content-type')))
     fs.writeFileSync(finalPath, buffer)
     return finalPath
   }
@@ -646,88 +642,39 @@ class ImageGenerateStep extends BaseStep {
     }
   }
 
-  _buildPhotoQueries(text, slot) {
-    const source = String(text || '').toLowerCase()
+  async _buildPhotoQueries(text, slot) {
+    const source = String(text || '').trim()
     const queries = []
 
-    // 中文→英文视觉元素映射，按类别组织
-    const subjectMap = {
-      '老人|老年|中老年|退休': 'senior person',
-      '夫妻|老伴|伴侣|配偶': 'elderly couple',
-      '家庭|家人|子女|儿女': 'family',
-      '孩子|孙子|孙女|小孩': 'grandchild',
-      '医生|护士|诊室': 'doctor',
-      '朋友|邻居': 'senior friends'
-    }
-    const actionMap = {
-      '交谈|聊天|说话|对话': 'talking',
-      '做饭|煮|炒|炖': 'cooking',
-      '吃饭|用餐|碗|筷子': 'eating dinner',
-      '看手机|微信|转账|消息': 'looking at phone',
-      '散步|走路|出行': 'walking outdoors',
-      '看书|阅读|读报': 'reading',
-      '睡觉|休息|躺': 'resting',
-      '擦窗|打扫|收拾': 'cleaning',
-      '看病|就医|检查|体检': 'medical checkup',
-      '哭|流泪|伤心': 'emotional moment',
-      '笑|开心|高兴': 'happy moment',
-      '握手|拥抱|牵手': 'holding hands',
-      '整理|收拾|归置': 'organizing',
-      '存钱|存款|工资|退休金': 'reviewing documents'
-    }
-    const sceneMap = {
-      '厨房|灶台': 'kitchen',
-      '客厅|沙发|藤椅': 'living room',
-      '卧室|床': 'bedroom',
-      '窗户|窗台': 'near window',
-      '医院|诊所': 'hospital',
-      '公园|户外|花园': 'outdoors garden',
-      '饭桌|餐桌': 'dining table',
-      '药片|药瓶|降压药|维生素': 'medicine bottle',
-      '存折|工资卡': 'documents',
-      '手机|电话': 'smartphone',
-      '阳光|晨光|月光': 'natural light',
-      '体检|血压|心电图': 'health screening',
-      '贴纸|画|蜡笔|手工': 'children artwork'
-    }
+    if (source.length > 5) {
+      try {
+        const model = modelRouter.route('analysis')
+        const { content } = await model.chat([
+          {
+            role: 'system',
+            content: 'You are a stock photo search assistant. Given a Chinese article description, output 3-5 English search queries for finding realistic stock photographs. Requirements:\n1. Each query must be exactly 2 words — broad and generic\n2. Use common stock photo keywords: people types + locations/objects\n3. Examples: "elderly couple", "kitchen medicine", "grandmother grandson"\n4. Output ONLY the queries, one per line, no numbering or explanation'
+          },
+          {
+            role: 'user',
+            content: `Find stock photos for this article about senior lifestyle:\n${source.slice(0, 300)}`
+          }
+        ], { temperature: 0.1, maxTokens: 200 })
 
-    // 从文本中提取匹配的视觉元素
-    const subjects = []
-    const actions = []
-    const scenes = []
-
-    for (const [zh, en] of Object.entries(subjectMap)) {
-      if (zh.split('|').some(k => source.includes(k))) { subjects.push(en); break }
-    }
-    for (const [zh, en] of Object.entries(actionMap)) {
-      if (zh.split('|').some(k => source.includes(k))) { actions.push(en); break }
-    }
-    for (const [zh, en] of Object.entries(sceneMap)) {
-      if (zh.split('|').some(k => source.includes(k))) { scenes.push(en); break }
-    }
-
-    // 组合生成搜索词：subject + action + scene
-    const subject = subjects[0] || 'senior person'
-    const action = actions[0] || ''
-    const scene = scenes[0] || ''
-
-    // 主搜索词：尽量完整描述场景
-    const parts = [subject, action, scene].filter(Boolean)
-    if (parts.length >= 2) {
-      queries.push(parts.join(' ') + ' photo')
-    }
-    // 补充搜索词：subject + scene（去掉动作，扩大范围）
-    if (scene) {
-      queries.push(`${subject} ${scene}`)
-    }
-    // 补充搜索词：subject + action（去掉场景）
-    if (action && parts.length >= 3) {
-      queries.push(`${subject} ${action}`)
+        const extracted = content.split('\n')
+          .map(line => line.replace(/^[-*\d.)\s]+/, '').trim())
+          .filter(line => line.length > 3 && line.length < 60)
+        queries.push(...extracted)
+        logger.info({ query: source.slice(0, 60), extracted }, 'image-generate: LLM 提取搜索词')
+      } catch (err) {
+        logger.warn({ err: err.message }, 'image-generate: LLM 提取搜索词失败，使用兜底词')
+      }
     }
 
     // 兜底通用词
-    if (slot === 'cover') queries.push(`${subject} at home`, `${subject} portrait`)
-    else queries.push(`${subject} daily life`, `${subject} home moment`)
+    if (queries.length === 0) {
+      if (slot === 'cover') queries.push('senior person at home', 'elderly lifestyle portrait')
+      else queries.push('senior daily life', 'elderly home moment')
+    }
 
     return unique(queries)
   }
