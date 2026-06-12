@@ -59,7 +59,7 @@ class WriteStep extends BaseStep {
       '硬性要求：',
       styleGuide.antiAI ? `1. ${styleGuide.antiAI}` : '1. 不要有 AI 味，不要出现"随着……发展""值得我们思考"等空话。',
       styleGuide.opening ? `2. ${styleGuide.opening}` : '2. 开头必须从日常生活场景切入。',
-      `3. 整体长度控制在 ${targetWordCount.min}-${targetWordCount.max} 字左右，适合公众号快速阅读。`,
+      `3. 文章正文必须达到 ${targetWordCount.min} 字以上（不含标题和格式符号）。如果内容不足，补充更多场景细节、人物对话、感官描写来充实。宁可多写不要少写。`,
       '4. 段落短，语言稳，像一个有经验、会照顾读者情绪的编辑在说话。',
       '5. 必须给出实用提醒，但不能制造恐慌。',
       '6. 健康、药物、政策、报销、法律类内容要提醒读者以官方或专业人士意见为准。',
@@ -134,9 +134,27 @@ class WriteStep extends BaseStep {
     articleData = this._normalizeArticle(articleData, selectedTopic)
 
     // 将结构化数据转换为 Markdown 格式的 article
-    const article = this._formatArticle(articleData)
+    let article = this._formatArticle(articleData)
 
-    logger.info({ title: articleData?.title?.slice(0, 30), wordCount: article?.length }, '✅ write: 写作完成')
+    // 字数检查：不足则补写
+    const chineseCount = (str) => (str.match(/[\u4e00-\u9fff]/g) || []).length
+    if (chineseCount(article) < targetWordCount.min) {
+      logger.info({ wordCount: chineseCount(article), target: targetWordCount.min }, '⚠️ write: 字数不足，尝试补写')
+      try {
+        const expandPrompt = `以下文章只有${chineseCount(article)}字，需要扩充到${targetWordCount.min}字以上。请在现有段落中补充更多场景细节、人物对话、感官描写，保持原意和风格，输出完整文章。\n\n${article}`
+        const { content: expanded } = await model.chat([
+          { role: 'system', content: '你是中老年公众号主笔。请扩充以下文章，补充细节使字数达标，保持原意和风格。直接输出完整文章，不要解释。' },
+          { role: 'user', content: expandPrompt }
+        ], { temperature: 0.7, maxTokens: 4000 })
+        if (expanded && expanded.length > article.length) {
+          article = expanded.replace(/^```\w*\s*/i, '').replace(/```\s*$/, '').trim()
+        }
+      } catch (err) {
+        logger.warn({ err: err.message }, '⚠️ write: 补写失败，使用原文章')
+      }
+    }
+
+    logger.info({ title: articleData?.title?.slice(0, 30), wordCount: chineseCount(article) }, '✅ write: 写作完成')
 
     return {
       ok: true,
