@@ -485,7 +485,8 @@ class ImageGenerateStep extends BaseStep {
       page_size: '12',
       license_type: 'commercial',
       category: 'photograph',
-      mature: 'false'
+      mature: 'false',
+      filetype: 'jpeg'
     });
 
     // 2. 伪造真实浏览器的请求头
@@ -546,11 +547,16 @@ class ImageGenerateStep extends BaseStep {
       signal: AbortSignal.timeout(timeout)
     })
     if (!res.ok) throw new Error(`download image failed: ${res.status}`)
+
+    // 拒绝 WebP 格式，公众号不支持
+    const contentType = String(res.headers.get('content-type') || '').toLowerCase()
+    if (contentType.includes('webp')) throw new Error('skip webp image')
+
     const buffer = Buffer.from(await res.arrayBuffer())
     if (!buffer.length) throw new Error('downloaded image is empty')
 
     ensureDir(path.dirname(outputPath))
-    const finalPath = outputPath.replace(path.extname(outputPath), guessExtension(url, res.headers.get('content-type')))
+    const finalPath = outputPath.replace(path.extname(outputPath), guessExtension(url, contentType))
     fs.writeFileSync(finalPath, buffer)
     return finalPath
   }
@@ -641,35 +647,87 @@ class ImageGenerateStep extends BaseStep {
   }
 
   _buildPhotoQueries(text, slot) {
-    const source = String(text || '')
+    const source = String(text || '').toLowerCase()
     const queries = []
 
-    // 从图片 prompt 中提取视觉元素生成精准搜索词
-    const visualMap = {
-      '药片|药瓶|降压药|维生素|钙片': ['medication pills photo', 'prescription drugs closeup'],
-      '手|老年斑|皱纹|指尖': ['aging hands photo', 'old person hands portrait'],
-      '厨房|灶台|煮|粥': ['elderly person cooking kitchen', 'senior home kitchen photo'],
-      '窗户|擦窗|窗台|玻璃': ['person looking out window', 'elderly near window natural light'],
-      '手机|微信|转账|消息': ['person looking at phone', 'senior smartphone screen'],
-      '医院|诊室|医生|护士': ['doctor patient photo', 'hospital visit elderly'],
-      '存折|钱|工资卡|退休金': ['person holding documents', 'senior reading paperwork'],
-      '饭桌|吃饭|碗|筷子': ['family dinner table', 'elderly eating meal'],
-      '沙发|客厅|藤椅|椅子': ['person sitting living room', 'elderly resting at home'],
-      '阳光|晨光|月光|路灯': ['natural light portrait', 'window sunlight interior'],
-      '孩子|孙子|孙女|小孩': ['grandparent grandchild', 'elderly with child'],
-      '贴纸|画|蜡笔|手工': ['children artwork', 'kids drawing'],
-      '体检|血压|心电图': ['blood pressure check', 'health screening']
+    // 中文→英文视觉元素映射，按类别组织
+    const subjectMap = {
+      '老人|老年|中老年|退休': 'senior person',
+      '夫妻|老伴|伴侣|配偶': 'elderly couple',
+      '家庭|家人|子女|儿女': 'family',
+      '孩子|孙子|孙女|小孩': 'grandchild',
+      '医生|护士|诊室': 'doctor',
+      '朋友|邻居': 'senior friends'
+    }
+    const actionMap = {
+      '交谈|聊天|说话|对话': 'talking',
+      '做饭|煮|炒|炖': 'cooking',
+      '吃饭|用餐|碗|筷子': 'eating dinner',
+      '看手机|微信|转账|消息': 'looking at phone',
+      '散步|走路|出行': 'walking outdoors',
+      '看书|阅读|读报': 'reading',
+      '睡觉|休息|躺': 'resting',
+      '擦窗|打扫|收拾': 'cleaning',
+      '看病|就医|检查|体检': 'medical checkup',
+      '哭|流泪|伤心': 'emotional moment',
+      '笑|开心|高兴': 'happy moment',
+      '握手|拥抱|牵手': 'holding hands',
+      '整理|收拾|归置': 'organizing',
+      '存钱|存款|工资|退休金': 'reviewing documents'
+    }
+    const sceneMap = {
+      '厨房|灶台': 'kitchen',
+      '客厅|沙发|藤椅': 'living room',
+      '卧室|床': 'bedroom',
+      '窗户|窗台': 'near window',
+      '医院|诊所': 'hospital',
+      '公园|户外|花园': 'outdoors garden',
+      '饭桌|餐桌': 'dining table',
+      '药片|药瓶|降压药|维生素': 'medicine bottle',
+      '存折|工资卡': 'documents',
+      '手机|电话': 'smartphone',
+      '阳光|晨光|月光': 'natural light',
+      '体检|血压|心电图': 'health screening',
+      '贴纸|画|蜡笔|手工': 'children artwork'
     }
 
-    for (const [keywords, englishQueries] of Object.entries(visualMap)) {
-      if (keywords.split('|').some(k => source.includes(k))) {
-        queries.push(...englishQueries)
-      }
+    // 从文本中提取匹配的视觉元素
+    const subjects = []
+    const actions = []
+    const scenes = []
+
+    for (const [zh, en] of Object.entries(subjectMap)) {
+      if (zh.split('|').some(k => source.includes(k))) { subjects.push(en); break }
+    }
+    for (const [zh, en] of Object.entries(actionMap)) {
+      if (zh.split('|').some(k => source.includes(k))) { actions.push(en); break }
+    }
+    for (const [zh, en] of Object.entries(sceneMap)) {
+      if (zh.split('|').some(k => source.includes(k))) { scenes.push(en); break }
+    }
+
+    // 组合生成搜索词：subject + action + scene
+    const subject = subjects[0] || 'senior person'
+    const action = actions[0] || ''
+    const scene = scenes[0] || ''
+
+    // 主搜索词：尽量完整描述场景
+    const parts = [subject, action, scene].filter(Boolean)
+    if (parts.length >= 2) {
+      queries.push(parts.join(' ') + ' photo')
+    }
+    // 补充搜索词：subject + scene（去掉动作，扩大范围）
+    if (scene) {
+      queries.push(`${subject} ${scene}`)
+    }
+    // 补充搜索词：subject + action（去掉场景）
+    if (action && parts.length >= 3) {
+      queries.push(`${subject} ${action}`)
     }
 
     // 兜底通用词
-    if (slot === 'cover') queries.push('asian senior lifestyle home', 'senior portrait at home')
-    else queries.push('asian senior daily life', 'senior home moment')
+    if (slot === 'cover') queries.push(`${subject} at home`, `${subject} portrait`)
+    else queries.push(`${subject} daily life`, `${subject} home moment`)
 
     return unique(queries)
   }
