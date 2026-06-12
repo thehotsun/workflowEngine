@@ -23,8 +23,7 @@ const logger = require('../utils/logger')
  *   1. T01 / T02 等 ID 精确匹配
  *   2. 纯数字（1、2、3）
  *   3. 序数词（第一个、第二个）
- *   4. 标题关键词模糊匹配
- *   5. fallback：默认选第一个并给出提示
+ *   4. fallback：默认选第一个并给出提示
  *
  * @workflow-config
  * - 无需配置，自动从 context 读取
@@ -49,9 +48,27 @@ class SelectTopicStep extends BaseStep {
       throw new Error('select-topic: no topics available in context')
     }
 
-    // 如果是恢复执行（用户已回复），直接解析选择
+    // 如果是恢复执行（用户已回复），解析选择
     if (userReply) {
       const selectedTopic = this._parseSelection(topics, userReply)
+
+      // 解析失败（不是纯数字），发提醒继续等待
+      if (!selectedTopic) {
+        const channelId = context.get('channelId')
+        const reminderMsg = '⚠️ 请回复话题编号（纯数字），如回复 1 或 2'
+        if (channelId) {
+          const runId = context.get('_runId')
+          const msgId = enqueueMessage({ runId, channelId, content: reminderMsg })
+          outboxEmitter.emit('new_message', { msgId, runId })
+        }
+        logger.info({ userReply }, '⚠️ 用户回复无效，发送提醒继续等待')
+        return {
+          ok: true,
+          _wait: true,
+          output: null
+        }
+      }
+
       logger.info({ userReply, selectedTopic: selectedTopic.title }, '✅ 用户已选择话题')
       return {
         ok: true,
@@ -86,19 +103,13 @@ class SelectTopicStep extends BaseStep {
   }
 
   /**
-   * 解析用户选择
+   * 解析用户选择 — 只接受纯阿拉伯数字（1、2、3、4、5、6）
+   * 其他任何内容一律返回 null，继续等待
    */
   _parseSelection(topics, userReply) {
     const reply = userReply.trim()
 
-    // 检查是否有直接引用 ID（如 T01, T02）
-    for (const topic of topics) {
-      if (topic.id && reply.toLowerCase().includes(topic.id.toLowerCase())) {
-        return topic
-      }
-    }
-
-    // 检查数字选择（如 "1", "2", "3"）
+    // 只匹配纯数字
     const numMatch = reply.match(/^(\d+)$/)
     if (numMatch) {
       const index = parseInt(numMatch[1]) - 1
@@ -107,41 +118,9 @@ class SelectTopicStep extends BaseStep {
       }
     }
 
-    // 检查序数词（如 "第一个", "第二个"）
-    const ordinalMatch = reply.match(/第[一二三四五六]个/)
-    if (ordinalMatch) {
-      const ordinalMap = { '第一': 0, '第二': 1, '第三': 2, '第四': 3, '第五': 4, '第六': 5 }
-      const index = ordinalMap[ordinalMatch[0].slice(0, 2)]
-      if (index !== undefined && topics[index]) {
-        return topics[index]
-      }
-    }
-
-    // 标题关键词模糊匹配：统计 reply 中有多少个汉字/字母出现在标题里
-    // 至少命中 2 个字才采信，防止单字母/标点误判
-    const replyLower = reply.toLowerCase()
-    let bestMatch = null
-    let bestScore = 0
-    for (const topic of topics) {
-      const titleLower = (topic.title || '').toLowerCase()
-      let score = 0
-      for (const ch of replyLower) {
-        // 只统计非空白字符
-        if (ch.trim() && titleLower.includes(ch)) score++
-      }
-      if (score > bestScore) {
-        bestScore = score
-        bestMatch = topic
-      }
-    }
-    if (bestMatch && bestScore >= 2) {
-      logger.info({ userReply, matchedTitle: bestMatch.title, score: bestScore }, '🔍 标题关键词匹配成功')
-      return bestMatch
-    }
-
-    // fallback: 无法解析，默认选第一个
-    logger.warn({ userReply }, '⚠️ 无法解析用户选择，默认选第一个')
-    return topics[0]
+    // 不是纯数字或数字超出范围，返回 null 表示无效
+    logger.warn({ userReply }, '⚠️ 用户回复不是有效数字，继续等待')
+    return null
   }
 
   /**
@@ -162,7 +141,7 @@ class SelectTopicStep extends BaseStep {
     })
 
     msg += '────────────\n'
-    msg += '请回复话题编号（如 T01、T02 或 1、2），也可以直接输入标题里的关键词：'
+    msg += '请回复数字选择（如 1、2）：'
 
     return msg
   }
