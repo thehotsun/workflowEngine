@@ -2,6 +2,7 @@
 
 const BaseStep = require('./base.step')
 const modelRouter = require('../models/router')
+const logger = require('../utils/logger')
 
 /**
  * write step - 生成文章
@@ -29,6 +30,8 @@ class WriteStep extends BaseStep {
     const styleBrief = context.get('styleBrief', [])
     const ragResults = context.get('ragResults', [])
     const searchResults = context.get('searchResults', [])
+
+    logger.info({ topic: selectedTopic?.title?.slice(0, 30) }, '✍️ write: 开始写作')
     const config = context.get('_config') || {}
     const stepConfig = config[this._configKey] || {}
     const targetWordCount = stepConfig.targetWordCount || { min: 900, max: 1400 }
@@ -36,14 +39,14 @@ class WriteStep extends BaseStep {
 
     const modelConfig = stepConfig.model || {}
     const taskType = modelConfig.taskType || 'writing'
-    const temperature = stepConfig.temperature ?? 0.8
+    const temperature = stepConfig.temperature ?? 0.7
     const maxTokens = stepConfig.maxTokens ?? 4000
 
     const ragContext = ragResults
       .map(c => `${c.heading ? `[${c.heading}] ` : ''}${c.content}`)
       .join('\n\n')
     const searchContext = Array.isArray(searchResults)
-      ? searchResults.slice(0, 3).map(r => r.content || r.snippet || '').join('\n\n')
+      ? searchResults.slice(0, 8).map((r, i) => `[素材${i + 1}] ${r.title || ''}: ${r.content || r.snippet || ''}`).join('\n\n')
       : ''
 
     const persona = stepConfig.persona || '你是一个长期写中老年公众号的中文主笔。'
@@ -63,10 +66,12 @@ class WriteStep extends BaseStep {
       '7. 标题要像真实公众号标题，清楚、具体、好懂。',
       `8. digest 控制在 ${digestLength} 个汉字以内。`,
       '9. inline_images 只允许使用这些 slot：after_lead、after_section_1、after_section_2、before_ending。',
-      styleGuide.tone ? `10. ${styleGuide.tone}` : '',
-      styleGuide.structure ? `11. ${styleGuide.structure}` : '',
-      styleGuide.ending ? `12. ${styleGuide.ending}` : '',
-      styleGuide.taboos ? `13. ${styleGuide.taboos}` : '',
+      '10. 文章中引用 research 中的 keyFacts 时，必须使用其中的具体数据和案例，不要丢弃或改写成空泛建议。',
+      '11. 如果 research 中标注"无相关素材"的部分，用场景描写代替，不要编造具体人名、地名、数字。',
+      styleGuide.tone ? `12. ${styleGuide.tone}` : '',
+      styleGuide.structure ? `13. ${styleGuide.structure}` : '',
+      styleGuide.ending ? `14. ${styleGuide.ending}` : '',
+      styleGuide.taboos ? `15. ${styleGuide.taboos}` : '',
       '',
       '输出格式：JSON，格式如下：',
       '{',
@@ -130,6 +135,8 @@ class WriteStep extends BaseStep {
 
     // 将结构化数据转换为 Markdown 格式的 article
     const article = this._formatArticle(articleData)
+
+    logger.info({ title: articleData?.title?.slice(0, 30), wordCount: article?.length }, '✅ write: 写作完成')
 
     return {
       ok: true,
