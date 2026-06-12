@@ -646,19 +646,19 @@ class ImageGenerateStep extends BaseStep {
 
     // 从图片 prompt 中提取视觉元素生成精准搜索词
     const visualMap = {
-      '药片|药瓶|降压药|维生素|钙片': ['medicine bottle', 'pills on table'],
-      '手|老年斑|皱纹|指尖': ['elderly hands close up', 'aged hands detail'],
-      '厨房|灶台|煮|粥': ['senior in kitchen', 'elderly cooking at home'],
-      '窗户|擦窗|窗台|玻璃': ['elderly by window', 'senior cleaning window'],
-      '手机|微信|转账|消息': ['senior using smartphone', 'elderly checking phone'],
-      '医院|诊室|医生|护士': ['senior at doctor office', 'elderly medical consultation'],
-      '存折|钱|工资卡|退休金': ['elderly with paperwork', 'senior financial documents'],
-      '饭桌|吃饭|碗|筷子': ['senior family dinner', 'elderly eating at home'],
-      '沙发|客厅|藤椅|椅子': ['senior sitting at home', 'elderly in living room'],
-      '阳光|晨光|月光|路灯': ['warm natural light home', 'sunlight through window'],
-      '孩子|孙子|孙女|小孩': ['grandparent and child', 'senior with grandchild'],
-      '贴纸|画|蜡笔|手工': ['children drawing', 'kids artwork'],
-      '体检|血压|心电图': ['senior health check', 'blood pressure monitoring']
+      '药片|药瓶|降压药|维生素|钙片': ['medication pills photo', 'prescription drugs closeup'],
+      '手|老年斑|皱纹|指尖': ['elderly person hands', 'old hands portrait photography'],
+      '厨房|灶台|煮|粥': ['elderly person cooking kitchen', 'senior home kitchen photo'],
+      '窗户|擦窗|窗台|玻璃': ['person looking out window', 'elderly near window natural light'],
+      '手机|微信|转账|消息': ['person looking at phone', 'senior smartphone screen'],
+      '医院|诊室|医生|护士': ['patient doctor consultation', 'medical office visit'],
+      '存折|钱|工资卡|退休金': ['person holding documents', 'senior reading paperwork'],
+      '饭桌|吃饭|碗|筷子': ['family dinner table', 'elderly eating meal'],
+      '沙发|客厅|藤椅|椅子': ['person sitting living room', 'elderly resting at home'],
+      '阳光|晨光|月光|路灯': ['natural light portrait', 'window sunlight interior'],
+      '孩子|孙子|孙女|小孩': ['grandparent grandchild', 'elderly with child'],
+      '贴纸|画|蜡笔|手工': ['children artwork', 'kids drawing'],
+      '体检|血压|心电图': ['blood pressure check', 'health screening']
     }
 
     for (const [keywords, englishQueries] of Object.entries(visualMap)) {
