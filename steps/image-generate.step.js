@@ -647,11 +647,11 @@ class ImageGenerateStep extends BaseStep {
     // 从图片 prompt 中提取视觉元素生成精准搜索词
     const visualMap = {
       '药片|药瓶|降压药|维生素|钙片': ['medication pills photo', 'prescription drugs closeup'],
-      '手|老年斑|皱纹|指尖': ['elderly person hands', 'old hands portrait photography'],
+      '手|老年斑|皱纹|指尖': ['aging hands photo', 'old person hands portrait'],
       '厨房|灶台|煮|粥': ['elderly person cooking kitchen', 'senior home kitchen photo'],
       '窗户|擦窗|窗台|玻璃': ['person looking out window', 'elderly near window natural light'],
       '手机|微信|转账|消息': ['person looking at phone', 'senior smartphone screen'],
-      '医院|诊室|医生|护士': ['patient doctor consultation', 'medical office visit'],
+      '医院|诊室|医生|护士': ['doctor patient photo', 'hospital visit elderly'],
       '存折|钱|工资卡|退休金': ['person holding documents', 'senior reading paperwork'],
       '饭桌|吃饭|碗|筷子': ['family dinner table', 'elderly eating meal'],
       '沙发|客厅|藤椅|椅子': ['person sitting living room', 'elderly resting at home'],
