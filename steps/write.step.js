@@ -139,11 +139,11 @@ class WriteStep extends BaseStep {
     // 字数检查：严重不足时（<600字）尝试补充细节
     const chineseCount = (str) => (str.match(/[\u4e00-\u9fff]/g) || []).length
     const wordCount = chineseCount(article)
-    if (wordCount < 1000) {
+    if (wordCount < 1200) {
       logger.info({ wordCount }, '⚠️ write: 字数严重不足，尝试补充细节')
       try {
         const { content: expanded } = await model.chat([
-          { role: 'system', content: '你是中老年公众号主笔。以下文章偏短，请补充 1-2 个场景细节或人物对话，使内容更丰满。保持原有风格和结构，直接输出完整文章。' },
+          { role: 'system', content: '你是中老年公众号主笔。以下文章偏短，请补充 2-3 个场景细节、人物对话或感官描写，使文章达到 1200 字以上。保持原有风格和结构，直接输出完整文章。' },
           { role: 'user', content: article }
         ], { temperature: 0.7, maxTokens: 4000 })
         if (expanded && chineseCount(expanded) > wordCount) {
