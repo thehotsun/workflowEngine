@@ -442,8 +442,37 @@ class ImageGenerateStep extends BaseStep {
   async _fetchFreePhoto({ queries, slot, outputPath, minWidth, preferLandscape, freePhoto }) {
     const seenUrls = new Set()
     for (const query of unique(queries)) {
-      const assets = await this._searchFreePhotos(query, freePhoto)
-      for (const asset of assets) {
+      // 优先搜 Pexels
+      const pexelsAssets = await this._searchPexels(query, freePhoto)
+      for (const asset of pexelsAssets) {
+        if (seenUrls.has(asset.url)) continue
+        seenUrls.add(asset.url)
+        if (preferLandscape && asset.width && asset.height && asset.width < asset.height) continue
+        if (asset.width && asset.width < minWidth) continue
+
+        try {
+          const finalPath = await this._downloadImage(asset.url, outputPath, freePhoto.timeout)
+          return {
+            path: finalPath,
+            meta: {
+              slot,
+              provider: 'pexels',
+              query,
+              title: asset.title,
+              creator: asset.creator,
+              source_page: asset.sourcePage,
+              download_url: asset.url,
+              local_path: finalPath,
+              width: asset.width,
+              height: asset.height
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Pexels 搜不到时降级到 Openverse
+      const openverseAssets = await this._searchFreePhotos(query, freePhoto)
+      for (const asset of openverseAssets) {
         if ((asset.url && seenUrls.has(asset.url)) || (asset.fallbackUrl && seenUrls.has(asset.fallbackUrl))) continue
         if (asset.url) seenUrls.add(asset.url)
         if (asset.fallbackUrl) seenUrls.add(asset.fallbackUrl)
@@ -477,6 +506,48 @@ class ImageGenerateStep extends BaseStep {
       }
     }
     return null
+  }
+
+    async _searchPexels(query, freePhoto) {
+    const apiKey = String(config.PEXELS_API_KEY || '').trim()
+    if (!apiKey) return []
+
+    try {
+      const params = new URLSearchParams({
+        query,
+        per_page: '10',
+        orientation: 'landscape',
+        size: 'medium'
+      })
+
+      const res = await fetch(`https://api.pexels.com/v1/search?${params.toString()}` , {
+        headers: {
+          'Authorization': apiKey,
+          'Accept': 'application/json'
+        },
+        signal: AbortSignal.timeout(freePhoto.timeout || 30000)
+      })
+
+      if (!res.ok) {
+        throw new Error(`Pexels search failed: ${res.status}`)
+      }
+
+      const data = await res.json()
+      const items = Array.isArray(data.photos) ? data.photos : []
+
+      return items.map(item => ({
+        title: String(item.alt || '').trim(),
+        url: String(item.src?.large2x || item.src?.large || item.src?.original || '').trim(),
+        creator: String(item.photographer || '').trim(),
+        sourcePage: String(item.photographer_url || item.url || '').trim(),
+        width: Number(item.width || 0),
+        height: Number(item.height || 0)
+      })).filter(item => item.url)
+
+    } catch (error) {
+      logger.warn({ err: error.message, query }, 'Pexels search failed, will fallback to Openverse')
+      return []
+    }
   }
 
     async _searchFreePhotos(query, freePhoto) {
@@ -652,7 +723,7 @@ class ImageGenerateStep extends BaseStep {
         const { content } = await model.chat([
           {
             role: 'system',
-            content: 'You are a stock photo search assistant. Given a Chinese article description, output 3-5 English search queries for finding realistic stock photographs. Requirements:\n1. Each query must be exactly 2 words — broad and generic\n2. Use common stock photo keywords: people types + locations/objects\n3. Examples: "elderly couple", "kitchen medicine", "grandmother grandson"\n4. Output ONLY the queries, one per line, no numbering or explanation'
+            content: 'You are a stock photo search assistant. Given a Chinese article description, output 3-5 English search queries for finding realistic stock photographs. Requirements:\n1. Each query must be exactly 2 words — broad and generic\n2. Use common stock photo keywords: people types + locations/objects\n3. Prefer concrete nouns (kitchen, pill, phone) over abstract concepts (loneliness, red cloth, empty)\n4. Examples: "elderly couple", "kitchen medicine", "grandmother grandson"\n5. Output ONLY the queries, one per line, no numbering or explanation'
           },
           {
             role: 'user',
