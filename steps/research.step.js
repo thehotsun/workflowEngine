@@ -57,9 +57,12 @@ class ResearchStep extends BaseStep {
         const keywords = await this._extractKeywords(selectedTopic)
         logger.info({ keywords }, '🔬 research: 提取关键词完成')
 
+        // 拆分关键词，用更宽的词搜索
+        const kwList = keywords.split(/\s+/).filter(w => w.length >= 2)
         const queries = [
-          keywords + ' 案例 数据',
-          keywords + ' 报告 调研 统计'
+          kwList.slice(0, 2).join(' ') + ' 老年人 真实案例',
+          kwList.slice(0, 2).join(' ') + ' 新闻 报道',
+          kwList.slice(0, 3).join(' ') + ' 调查报告 数据'
         ]
 
         const allResults = []
@@ -70,7 +73,6 @@ class ResearchStep extends BaseStep {
               query,
               count: 5
             }, { action: 'search', timeoutMs: 15000 })
-            // API 返回格式: { ok, result: { content: [{ type: 'text', text: 'JSON字符串' }] } }
             let results = []
             try {
               const textBlock = searchRes?.result?.content?.find(c => c.type === 'text')
@@ -80,13 +82,21 @@ class ResearchStep extends BaseStep {
               }
             } catch {}
             if (!results.length) results = searchRes?.results || searchRes || []
-            if (Array.isArray(results)) allResults.push(...results)
+            if (Array.isArray(results)) {
+              // 清理 EXTERNAL_UNTRUSTED_CONTENT 标签
+              const cleaned = results.map(r => ({
+                ...r,
+                title: this._cleanText(r.title),
+                content: this._cleanText(r.content || r.snippet || '')
+              }))
+              allResults.push(...cleaned)
+            }
           } catch (err) {
             logger.warn({ err: err.message }, '🔬 research: 单次搜索失败，继续')
           }
         }
 
-        searchResults = this._filterResults(allResults, keywords)
+        searchResults = this._filterResults(allResults, kwList.join(' '))
         logger.info({ count: searchResults.length }, '🔬 research: 搜索+过滤完成')
       } catch (err) {
         logger.warn({ err: err.message }, '🔬 research: 搜索流程失败，继续')
@@ -190,6 +200,19 @@ class ResearchStep extends BaseStep {
   /**
    * 改进③：过滤无关搜索结果
    */
+  /**
+   * 清理搜索结果中的安全标签和多余空白
+   */
+  _cleanText(text) {
+    if (!text) return ''
+    return text
+      .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '')
+      .replace(/<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '')
+      .replace(/Source: Web Search\s*---\s*/g, '')
+      .replace(/\n+/g, ' ')
+      .trim()
+  }
+
   _filterResults(results, keywordsOrTopic) {
     if (!Array.isArray(results) || results.length === 0) return []
 
