@@ -57,46 +57,52 @@ class ResearchStep extends BaseStep {
         const keywords = await this._extractKeywords(selectedTopic)
         logger.info({ keywords }, '🔬 research: 提取关键词完成')
 
-        // 拆分关键词，用更宽的词搜索
+        // 自适应搜索：先精确，不够再放宽
         const kwList = keywords.split(/\s+/).filter(w => w.length >= 2)
-        const queries = [
-          kwList.slice(0, 2).join(' ') + ' 老年人 真实案例',
-          kwList.slice(0, 2).join(' ') + ' 新闻 报道',
-          kwList.slice(0, 3).join(' ') + ' 调查报告 数据'
-        ]
-
         const allResults = []
-        for (const query of queries) {
-          try {
-            logger.info({ query }, '🔬 research: 搜索中')
-            const searchRes = await openclawClient.invokeTool('web_search', {
-              query,
-              count: 5
-            }, { action: 'search', timeoutMs: 15000 })
-            let results = []
-            try {
-              const textBlock = searchRes?.result?.content?.find(c => c.type === 'text')
-              if (textBlock?.text) {
-                const parsed = JSON.parse(textBlock.text)
-                results = parsed.results || []
-              }
-            } catch {}
-            if (!results.length) results = searchRes?.results || searchRes || []
-            if (Array.isArray(results)) {
-              // 清理 EXTERNAL_UNTRUSTED_CONTENT 标签
-              const cleaned = results.map(r => ({
-                ...r,
-                title: this._cleanText(r.title),
-                content: this._cleanText(r.content || r.snippet || '')
-              }))
-              allResults.push(...cleaned)
-            }
-          } catch (err) {
-            logger.warn({ err: err.message }, '🔬 research: 单次搜索失败，继续')
+        const MIN_RESULTS = 5
+
+        // 第一轮：精确搜索（前2个关键词 + 细分词）
+        const round1Queries = [
+          kwList.slice(0, 2).join(' ') + ' 真实案例',
+          kwList.slice(0, 2).join(' ') + ' 新闻 报道'
+        ]
+        for (const query of round1Queries) {
+          const results = await this._doSearch(query)
+          allResults.push(...results)
+        }
+        searchResults = this._filterResults(allResults, kwList.join(' '))
+        logger.info({ round: 1, raw: allResults.length, filtered: searchResults.length }, '🔬 research: 第一轮搜索完成')
+
+        // 第二轮：如果不够，用更宽的词搜索
+        if (searchResults.length < MIN_RESULTS) {
+          logger.info({ filtered: searchResults.length, min: MIN_RESULTS }, '🔬 research: 素材不足，放宽搜索')
+          const broadQueries = [
+            kwList.slice(0, 2).join(' ') + ' 调研 数据',
+            kwList[0] + ' 老年人 健康'
+          ]
+          for (const query of broadQueries) {
+            const results = await this._doSearch(query)
+            allResults.push(...results)
           }
+          searchResults = this._filterResults(allResults, kwList.join(' '))
+          logger.info({ round: 2, raw: allResults.length, filtered: searchResults.length }, '🔬 research: 第二轮搜索完成')
         }
 
-        searchResults = this._filterResults(allResults, kwList.join(' '))
+        // 第三轮：如果还不够，用单个关键词搜
+        if (searchResults.length < MIN_RESULTS && kwList.length > 2) {
+          logger.info({ filtered: searchResults.length, min: MIN_RESULTS }, '🔬 research: 素材仍不足，继续放宽')
+          const broadQueries = [
+            kwList[0] + ' ' + kwList[kwList.length - 1],
+            kwList.slice(0, 2).join(' ') + ' 怎么办'
+          ]
+          for (const query of broadQueries) {
+            const results = await this._doSearch(query)
+            allResults.push(...results)
+          }
+          searchResults = this._filterResults(allResults, kwList.join(' '))
+          logger.info({ round: 3, raw: allResults.length, filtered: searchResults.length }, '🔬 research: 第三轮搜索完成')
+        }
         logger.info({ count: searchResults.length }, '🔬 research: 搜索+过滤完成')
       } catch (err) {
         logger.warn({ err: err.message }, '🔬 research: 搜索流程失败，继续')
@@ -178,6 +184,36 @@ class ResearchStep extends BaseStep {
       ok: true,
       output: { research },
       usage
+    }
+  }
+
+  /**
+   * 执行一次搜索并返回清理后的结果
+   */
+  async _doSearch(query) {
+    try {
+      const searchRes = await openclawClient.invokeTool('web_search', {
+        query,
+        count: 5
+      }, { action: 'search', timeoutMs: 15000 })
+      let results = []
+      try {
+        const textBlock = searchRes?.result?.content?.find(c => c.type === 'text')
+        if (textBlock?.text) {
+          const parsed = JSON.parse(textBlock.text)
+          results = parsed.results || []
+        }
+      } catch {}
+      if (!results.length) results = searchRes?.results || searchRes || []
+      if (!Array.isArray(results)) return []
+      return results.map(r => ({
+        ...r,
+        title: this._cleanText(r.title),
+        content: this._cleanText(r.content || r.snippet || '')
+      }))
+    } catch (err) {
+      logger.warn({ err: err.message, query }, '🔬 research: 搜索失败')
+      return []
     }
   }
 
