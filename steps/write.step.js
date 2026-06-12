@@ -34,7 +34,7 @@ class WriteStep extends BaseStep {
     logger.info({ topic: selectedTopic?.title?.slice(0, 30) }, '✍️ write: 开始写作')
     const config = context.get('_config') || {}
     const stepConfig = config[this._configKey] || {}
-    const targetWordCount = stepConfig.targetWordCount || { min: 900, max: 1400 }
+    const targetWordCount = stepConfig.targetWordCount || { min: 1200, max: 1800 }
     const digestLength = stepConfig.digestLength || 54
 
     const modelConfig = stepConfig.model || {}
@@ -59,7 +59,7 @@ class WriteStep extends BaseStep {
       '硬性要求：',
       styleGuide.antiAI ? `1. ${styleGuide.antiAI}` : '1. 不要有 AI 味，不要出现"随着……发展""值得我们思考"等空话。',
       styleGuide.opening ? `2. ${styleGuide.opening}` : '2. 开头必须从日常生活场景切入。',
-      `3. 整体长度控制在 ${targetWordCount.min}-${targetWordCount.max} 字左右。如果素材丰富，多写细节；素材少则精炼表达，不硬凑字数。`,
+      `3. 整体长度控制在 ${targetWordCount.min}-${targetWordCount.max} 字。公众号情感类文章通常 1200 字以上，需要充分展开场景、对话和情绪描写。`,
       '4. 段落短，语言稳，像一个有经验、会照顾读者情绪的编辑在说话。',
       '5. 必须给出实用提醒，但不能制造恐慌。',
       '6. 健康、药物、政策、报销、法律类内容要提醒读者以官方或专业人士意见为准。',
@@ -139,7 +139,7 @@ class WriteStep extends BaseStep {
     // 字数检查：严重不足时（<600字）尝试补充细节
     const chineseCount = (str) => (str.match(/[\u4e00-\u9fff]/g) || []).length
     const wordCount = chineseCount(article)
-    if (wordCount < 600) {
+    if (wordCount < 800) {
       logger.info({ wordCount }, '⚠️ write: 字数严重不足，尝试补充细节')
       try {
         const { content: expanded } = await model.chat([
