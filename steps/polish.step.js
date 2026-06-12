@@ -50,11 +50,18 @@ class PolishStep extends BaseStep {
     const systemPrompt = stepConfig.systemPrompt || [
       persona,
       '请对以下文章进行润色：保持原意，提升文字流畅度和可读性，优化段落结构。',
-      styleGuide.focus ? `重点：${styleGuide.focus}` : '',
-      styleGuide.concrete ? `${styleGuide.concrete}` : '',
-      styleGuide.antiAI ? `${styleGuide.antiAI}` : '',
-      styleGuide.rhythm ? `${styleGuide.rhythm}` : '',
-      styleGuide.ending ? `${styleGuide.ending}` : ''
+      '',
+      '硬性要求：',
+      '1. 直接输出润色后的文章，不要输出任何编辑感言、修改说明、润色思路等额外内容。',
+      '2. 不要在文章开头或结尾添加任何形式的总结、点评或互动引导。',
+      '3. 结尾不要用金句式收尾（如"原来最深的爱…"），用场景自然收尾或留白。',
+      '4. 人物名字、时间线、细节前后必须一致，不要产生矛盾。',
+      '5. 不要出现"这篇文字本身已极富质感""像一盏温着的老茶"等编辑自我介绍式的内容。',
+      styleGuide.focus ? `6. ${styleGuide.focus}` : '',
+      styleGuide.concrete ? `7. ${styleGuide.concrete}` : '',
+      styleGuide.antiAI ? `8. ${styleGuide.antiAI}` : '',
+      styleGuide.rhythm ? `9. ${styleGuide.rhythm}` : '',
+      styleGuide.ending ? `10. ${styleGuide.ending}` : ''
     ].filter(Boolean).join('\n')
 
     const model = modelRouter.route(taskType)

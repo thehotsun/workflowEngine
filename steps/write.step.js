@@ -57,7 +57,7 @@ class WriteStep extends BaseStep {
       '请写一篇"短文章"，目标读者是 50-75 岁读者与其家属。',
       '',
       '硬性要求：',
-      styleGuide.antiAI ? `1. ${styleGuide.antiAI}` : '1. 不要有 AI 味，不要出现"随着……发展""值得我们思考"等空话。',
+      styleGuide.antiAI ? `1. ${styleGuide.antiAI}` : '1. 不要有 AI 味：不要出现"随着……发展""值得我们思考"等空话；结尾不要用金句式收尾（如"原来最深的爱…"），用场景自然收尾或留白；不要出现"转发给…""愿所有…"等互动引导。',
       styleGuide.opening ? `2. ${styleGuide.opening}` : '2. 开头必须从日常生活场景切入。',
       `3. 整体长度控制在 ${targetWordCount.min}-${targetWordCount.max} 字。公众号情感类文章通常 1200 字以上，需要充分展开场景、对话和情绪描写。`,
       '4. 段落短，语言稳，像一个有经验、会照顾读者情绪的编辑在说话。',
