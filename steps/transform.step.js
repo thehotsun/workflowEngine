@@ -1,6 +1,7 @@
 'use strict'
 
 const BaseStep = require('./base.step')
+const logger = require('../utils/logger')
 
 /**
  * 轻量数据变换 step
@@ -27,7 +28,10 @@ class TransformStep extends BaseStep {
       throw new Error('transform step requires stepDef.run(context)')
     }
 
+    logger.info('🔄 transform: 开始转换')
     const output = await stepDef.run(context)
+    logger.info({ outputKeys: Object.keys(output || {}) }, '✅ transform: 转换完成')
+
     return { ok: true, output: output || {} }
   }
 }

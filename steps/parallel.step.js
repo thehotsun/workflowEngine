@@ -1,6 +1,7 @@
 'use strict'
 
 const BaseStep = require('./base.step')
+const logger = require('../utils/logger')
 
 /**
  * 并行执行多个子 step，等待所有完成后合并结果
@@ -30,6 +31,9 @@ class ParallelStep extends BaseStep {
     if (!runId) throw new Error('parallel: missing _runId in context')
 
     const parentIndex = context.get('_currentStepIndex', -1)
+    const taskCount = this._subStepDefs.length
+
+    logger.info({ taskCount }, '⚡ parallel: 开始并行执行')
 
     const tasks = this._subStepDefs.map((subStepDef, i) => {
       // 并行子步骤使用负数 stepIndex（以父 index 为基础），防止与顶层 step_index 冲突
@@ -56,6 +60,8 @@ class ParallelStep extends BaseStep {
     if (errors.length) {
       throw new Error(`Parallel steps failed: ${errors.join('; ')}`)
     }
+
+    logger.info({ completed: results.filter(r => r.status === 'fulfilled').length, total: taskCount }, '✅ parallel: 并行执行完成')
 
     return { ok: true, output: results.map(r => r.value?.output) }
   }

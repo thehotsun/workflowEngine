@@ -1,6 +1,7 @@
 'use strict'
 
 const BaseStep = require('./base.step')
+const logger = require('../utils/logger')
 
 /**
  * 占位 step，不做任何事
@@ -18,6 +19,7 @@ class NoopStep extends BaseStep {
   get retryable() { return false }
 
   async execute() {
+    logger.info('⏭️ noop: 空操作')
     return { ok: true, output: { noop: true } }
   }
 }

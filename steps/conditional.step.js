@@ -1,6 +1,7 @@
 'use strict'
 
 const BaseStep = require('./base.step')
+const logger = require('../utils/logger')
 
 /**
  * 条件分支 step
@@ -41,7 +42,10 @@ class ConditionalStep extends BaseStep {
     const result = await stepDef.condition(context)
     const branchDef = result ? stepDef.ifTrue : stepDef.ifFalse
 
+    logger.info({ condition: result, hasBranch: !!branchDef }, '🔀 conditional: 条件判断')
+
     if (!branchDef) {
+      logger.info('🔀 conditional: 无分支定义，跳过')
       return { ok: true, output: { branch: result ? 'true' : 'false', skipped: true } }
     }
 

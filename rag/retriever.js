@@ -3,14 +3,21 @@
 const embedder = require('./embedder')
 const { isVectorAvailable } = require('../persist/db')
 const { vectorSearch, textSearch, getChunksByIds, getActiveChunkCount, getDocumentFrequencyByTerms } = require('./store')
+const modelRouter = require('../models/router')
 const logger = require('../utils/logger')
 
 /**
  * 检索知识库
  * 优先路径：embedding → 向量召回 → BM25 重排
  * 降级路径：sqlite-vec 不可用 或 embedding 失败 → 纯文本 LIKE 检索
+ *
+ * @param {object} opts
+ * @param {string} opts.query - 查询文本
+ * @param {number} [opts.topK=3] - 返回数量
+ * @param {number} [opts.minScore=0.3] - 最低分数阈值，低于此值的结果会被过滤
+ * @returns {Array<{id, heading, content, score}>}
  */
-async function retrieve({ query, topK = 5 }) {
+async function retrieve({ query, topK = 3, minScore = 0.3, rerank = true }) {
   // 显式检测 sqlite-vec 是否可用，不可用则直接走文本降级，避免建表失败引发异常
   if (!isVectorAvailable()) {
     logger.warn('RAG: sqlite-vec not available, using text search fallback')
@@ -63,7 +70,32 @@ async function retrieve({ query, topK = 5 }) {
     })
 
     reranked.sort((a, b) => b.finalScore - a.finalScore)
-    return reranked.slice(0, topK)
+
+    // 阈值过滤：去掉低质量结果
+    let filtered = reranked.filter(c => c.finalScore >= minScore)
+
+    // LLM Rerank：用 LLM 对结果进行二次排序
+    if (rerank && filtered.length > 1) {
+      try {
+        filtered = await llmRerank(query, filtered)
+        logger.info({ count: filtered.length }, 'RAG: LLM Rerank 完成')
+      } catch (err) {
+        logger.warn({ err: err.message }, 'RAG: LLM Rerank 失败，使用原始排序')
+      }
+    }
+
+    // 返回时附带 score 字段
+    return filtered.slice(0, topK).map(c => ({
+      id: c.id,
+      doc_id: c.doc_id,
+      chunk_index: c.chunk_index,
+      heading: c.heading,
+      content: c.content,
+      score: Math.round((c.rerankScore || c.finalScore) * 1000) / 1000,
+      vecScore: Math.round(c.vecScore * 1000) / 1000,
+      bm25Score: Math.round(c.bm25Score * 1000) / 1000,
+      rerankScore: c.rerankScore ? Math.round(c.rerankScore * 1000) / 1000 : null,
+    }))
   }
 
   return textSearch(query, topK)
@@ -107,6 +139,50 @@ function bm25Score(text, keywords, { k1 = 1.5, b = 0.75, avgLen = 500, N = 1, df
     score += idf * (numerator / denominator)
   }
   return score
+}
+
+/**
+ * LLM Rerank：用 LLM 对检索结果进行相关性排序
+ * @param {string} query - 查询文本
+ * @param {Array} chunks - 检索结果列表
+ * @returns {Array} 重排序后的结果
+ */
+async function llmRerank(query, chunks) {
+  if (chunks.length <= 1) return chunks
+
+  // 构建 chunk 摘要列表
+  const chunkSummaries = chunks.map((c, i) => {
+    const preview = (c.content || '').slice(0, 100).replace(/\n/g, ' ')
+    return `[${i}] ${c.heading || ''}: ${preview}`
+  }).join('\n')
+
+  const model = modelRouter.route('analysis')
+  const { content } = await model.chat([
+    {
+      role: 'system',
+      content: '你是一个文档相关性评估助手。根据查询和文档片段的相关性，输出排序后的索引列表。\n要求：\n1. 只输出相关文档的索引号，用逗号分隔\n2. 相关的排前面，不相关的排后面或不输出\n3. 最多输出 5 个索引号\n4. 只输出索引列表，不要解释'
+    },
+    {
+      role: 'user',
+      content: `查询：${query}\n\n文档片段：\n${chunkSummaries}`
+    }
+  ], { temperature: 0.1, maxTokens: 100 })
+
+  // 解析 LLM 返回的索引列表
+  const indices = content.match(/\d+/g)?.map(Number) || []
+  const validIndices = indices.filter(i => i >= 0 && i < chunks.length)
+
+  if (!validIndices.length) return chunks
+
+  // 按 LLM 排序重新排列，未被选中的放最后
+  const selected = validIndices.map(i => chunks[i]).filter(Boolean)
+  const unselected = chunks.filter((_, i) => !validIndices.includes(i))
+
+  // 为 reranked 结果添加 rerankScore
+  return [...selected, ...unselected].map((c, i) => ({
+    ...c,
+    rerankScore: c.finalScore * (1 + (selected.length - i) * 0.1)
+  }))
 }
 
 module.exports = { retrieve }

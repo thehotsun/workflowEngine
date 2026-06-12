@@ -63,12 +63,16 @@ function textSearch(query, topK = 10) {
 
   return rows
     .map(row => ({
-      ...row,
+      id: row.id,
+      doc_id: row.doc_id,
+      chunk_index: row.chunk_index,
+      heading: row.heading,
+      content: row.content,
+      score: Math.round(keywordScore(row.content, keywords) * 1000) / 1000,
       vecScore: 0,
-      bm25Score: keywordScore(row.content, keywords),
-      finalScore: keywordScore(row.content, keywords)
+      bm25Score: Math.round(keywordScore(row.content, keywords) * 1000) / 1000,
     }))
-    .sort((a, b) => b.finalScore - a.finalScore)
+    .sort((a, b) => b.score - a.score)
     .slice(0, topK)
 }
 

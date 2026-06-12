@@ -2,6 +2,7 @@
 
 const BaseStep = require('./base.step')
 const modelRouter = require('../models/router')
+const logger = require('../utils/logger')
 
 /**
  * generate-topics step - 生成多个候选话题
@@ -44,6 +45,8 @@ class GenerateTopicsStep extends BaseStep {
   }
 
   async execute(context, stepDef) {
+    logger.info('📝 generate-topics: 开始生成候选话题')
+
     const input = context.get('input')
     const hotspots = context.get('hotspots')
     const conversationHistory = context.get('conversationHistory', [])
@@ -339,6 +342,8 @@ class GenerateTopicsStep extends BaseStep {
       '段落短，细节真，像家里人说话，适合转发到家庭群和姐妹群。',
       '家庭伦理和夫妻矛盾题，重点写"委屈从哪来、边界怎么守、话该怎么说"。',
     ]
+
+    logger.info({ topicCount: topics.length, titles: topics.map(t => t.title?.slice(0, 20)) }, '✅ generate-topics: 话题生成完成')
 
     return { topics, styleBrief }
   }

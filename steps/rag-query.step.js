@@ -2,6 +2,7 @@
 
 const BaseStep = require('./base.step')
 const retriever = require('../rag/retriever')
+const logger = require('../utils/logger')
 
 /**
  * 知识库检索 step
@@ -13,7 +14,9 @@ const retriever = require('../rag/retriever')
  * }
  *
  * @workflow-config
- * - _config.ragQuery.topK: 检索返回数量（默认 5）
+ * - _config.ragQuery.topK: 检索返回数量（默认 3）
+ * - _config.ragQuery.minScore: 最低分数阈值（默认 0.3）
+ * - _config.ragQuery.rerank: 是否 LLM 重排序（默认 true）
  *
  * @requires [] - 无依赖（通过 stepDef.input 接收查询）
  * @provides ['ragResults'] - 知识库检索结果
@@ -36,8 +39,20 @@ class RagQueryStep extends BaseStep {
 
     const config = context.get('_config') || {}
     const stepConfig = config[this._configKey] || {}
-    const topK = stepConfig.topK || 5
-    const chunks = await retriever.retrieve({ query, topK })
+    const topK = stepConfig.topK || 3
+    const minScore = stepConfig.minScore || 0.3
+    const rerank = stepConfig.rerank !== false
+
+    logger.info({ query: query.slice(0, 80), topK, minScore, rerank }, '🔍 rag-query: 开始检索')
+
+    const chunks = await retriever.retrieve({ query, topK, minScore, rerank })
+
+    logger.info({
+      hitCount: chunks.length,
+      topHeading: chunks[0]?.heading || null,
+      topScore: chunks[0]?.score || null,
+      scores: chunks.map(c => ({ heading: c.heading?.slice(0, 20), score: c.score })),
+    }, '✅ rag-query: 检索完成')
 
     return { ok: true, output: chunks }
   }

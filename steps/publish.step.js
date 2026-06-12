@@ -3,6 +3,7 @@
 const BaseStep = require('./base.step')
 const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('../trigger/outbox-worker')
+const logger = require('../utils/logger')
 
 /**
  * publish step — 将文章加入发布队列，等待异步发送
@@ -35,11 +36,15 @@ class PublishStep extends BaseStep {
     if (!channelId) throw new Error('publish: no channelId in context')
     if (!runId) throw new Error('publish: no _runId in context')
 
+    logger.info({ channelId, contentLength: content.length }, '📤 publish: 入队发送')
+
     // 仅写 outbox，由 outbox worker 负责真正发送，避免重复发送
     const msgId = enqueueMessage({ runId, channelId, content })
 
     // 事件驱动：通知 outbox worker 立即消费，降低发送延迟
     outboxEmitter.emit('new_message', { msgId, runId })
+
+    logger.info({ msgId }, '✅ publish: 已入队')
 
     return { ok: true, output: { published: false, queued: true, msgId } }
   }

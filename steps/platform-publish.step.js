@@ -2,6 +2,7 @@
 
 const BaseStep = require('./base.step')
 const WeChatPlatform = require('./platforms/wechat')
+const logger = require('../utils/logger')
 
 /**
  * platform-publish step — 将文章提交到发布平台草稿箱
@@ -31,7 +32,10 @@ class PlatformPublishStep extends BaseStep {
       || []
     const enabledPlatforms = platforms.filter(platform => platform && platform.enabled !== false)
 
+    logger.info({ platformCount: enabledPlatforms.length, types: enabledPlatforms.map(p => p.type) }, '🚀 platform-publish: 开始发布')
+
     if (enabledPlatforms.length === 0) {
+      logger.info('🚀 platform-publish: 无启用平台，跳过')
       return {
         ok: true,
         output: {
@@ -59,6 +63,8 @@ class PlatformPublishStep extends BaseStep {
         reason: 'unsupported-platform'
       })
     }
+
+    logger.info({ results: results.map(r => ({ platform: r.platform, ok: r.ok, skipped: r.skipped })) }, '✅ platform-publish: 发布完成')
 
     return {
       ok: true,

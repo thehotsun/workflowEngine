@@ -2,6 +2,7 @@
 
 const BaseStep = require('./base.step')
 const https = require('https')
+const logger = require('../utils/logger')
 
 /**
  * fetch-hotspots step - 抓取热点（微博、头条、百度、抖音、B站）
@@ -249,6 +250,8 @@ class FetchHotspotsStep extends BaseStep {
     const enabledSources = config.enabledSources || ['weibo', 'toutiao', 'baidu', 'douyin', 'bilibili']
     const demo = config.demo || false
 
+    logger.info({ sources: enabledSources, limit, demo }, '📰 fetch-hotspots: 开始抓取热点')
+
     if (demo) {
       const hotspots = {
         timestamp: new Date().toISOString(),
@@ -263,25 +266,28 @@ class FetchHotspotsStep extends BaseStep {
       }
     }
 
-    let items = []
     let fallbackUsed = false
 
-    for (const source of enabledSources) {
-      try {
-        if (source === 'weibo') {
-          items.push(...(await this._fetchWeibo(limit)))
-        } else if (source === 'toutiao') {
-          items.push(...(await this._fetchToutiao(limit)))
-        } else if (source === 'baidu') {
-          items.push(...(await this._fetchBaidu(limit)))
-        } else if (source === 'douyin') {
-          items.push(...(await this._fetchDouyin(limit)))
-        } else if (source === 'bilibili') {
-          items.push(...(await this._fetchBilibili(limit)))
-        }
-      } catch {
-        // 单个来源失败不影响其他来源
-        continue
+    // 并行抓取所有来源，单个失败不影响其他
+    const fetchMap = {
+      weibo: this._fetchWeibo,
+      toutiao: this._fetchToutiao,
+      baidu: this._fetchBaidu,
+      douyin: this._fetchDouyin,
+      bilibili: this._fetchBilibili,
+    }
+
+    const results = await Promise.allSettled(
+      enabledSources.map(source => {
+        const fn = fetchMap[source]
+        return fn ? fn.call(this, limit) : Promise.resolve([])
+      })
+    )
+
+    let items = []
+    for (const result of results) {
+      if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+        items.push(...result.value)
       }
     }
 
@@ -300,6 +306,8 @@ class FetchHotspotsStep extends BaseStep {
       sources: [...new Set(items.map(i => i.source))].sort(),
       items,
     }
+
+    logger.info({ itemCount: items.length, fallbackUsed, sources: hotspots.sources }, '✅ fetch-hotspots: 抓取完成')
 
     return {
       ok: true,

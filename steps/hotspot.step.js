@@ -2,6 +2,7 @@
 
 const BaseStep = require('./base.step')
 const modelRouter = require('../models/router')
+const logger = require('../utils/logger')
 
 /**
  * hotspot step — 从搜索结果和知识库中发现热点话题
@@ -32,6 +33,8 @@ class HotspotStep extends BaseStep {
     const input = context.get('input', '')
     const searchResults = context.get('searchResults', [])
     const ragResults = context.get('ragResults', [])
+
+    logger.info('🔥 hotspot: 开始分析热点契合度')
 
     const config = context.get('_config') || {}
     const stepConfig = config[this._configKey] || {}
@@ -82,6 +85,8 @@ class HotspotStep extends BaseStep {
       // 解析失败时把整段输出作为 hotspot 文本
       hotspot = content.trim()
     }
+
+    logger.info({ hasSuggestions: suggestions?.length > 0 }, '✅ hotspot: 分析完成')
 
     return {
       ok: true,
