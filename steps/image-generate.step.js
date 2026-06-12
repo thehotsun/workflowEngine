@@ -271,12 +271,12 @@ class ImageGenerateStep extends BaseStep {
       imageNotes.push(`封面图生成失败：${err.message}`)
     }
 
-    for (let i = 0; i < inlineImages.length; i++) {
-      const imageItem = inlineImages[i]
+    // 并行生成所有插图
+    const inlinePromises = inlineImages.map(async (imageItem, i) => {
       const slot = String(imageItem.slot || '').trim()
       const prompt = String(imageItem.prompt || '').trim()
       const caption = String(imageItem.caption || '').trim()
-      if (!slot || !prompt) continue
+      if (!slot || !prompt) return null
 
       try {
         const imagePath = await this._generateInlineImage({
@@ -289,14 +289,23 @@ class ImageGenerateStep extends BaseStep {
           imageNotes,
           photoSources
         })
-        if (imagePath) inlineImagePaths[slot] = imagePath
+        return { slot, imagePath, error: null }
       } catch (err) {
-        if (err.isAuthFailed) {
+        return { slot, imagePath: null, error: err }
+      }
+    })
+
+    const inlineResults = await Promise.allSettled(inlinePromises)
+    for (const result of inlineResults) {
+      if (result.status !== 'fulfilled' || !result.value) continue
+      const { slot, imagePath, error } = result.value
+      if (error) {
+        if (error.isAuthFailed) {
           logger.error(
-            { runId, step: this.name, slot, error: err.message, allNotes: imageNotes },
+            { runId, step: this.name, slot, error: error.message, allNotes: imageNotes },
             'image-generate step: 插图认证失败，暂停流程，等待操作人处理后从本步骤重试'
           )
-          this._notifyPause({ context, runId, reason: err.message, imageNotes })
+          this._notifyPause({ context, runId, reason: error.message, imageNotes })
           return {
             ok: false,
             _wait: true,
@@ -309,11 +318,13 @@ class ImageGenerateStep extends BaseStep {
               inlineImagePaths,
               imageNotes,
               photoSources,
-              _pauseReason: err.message
+              _pauseReason: error.message
             }
           }
         }
-        imageNotes.push(`插图 ${i + 1}（${slot}）生成失败：${err.message}`)
+        imageNotes.push(`插图（${slot}）生成失败：${error.message}`)
+      } else if (imagePath) {
+        inlineImagePaths[slot] = imagePath
       }
     }
 
@@ -633,34 +644,33 @@ class ImageGenerateStep extends BaseStep {
     const source = String(text || '')
     const queries = []
 
-    if (['夫妻', '婚姻', '老伴'].some(token => source.includes(token))) {
-      queries.push('asian senior couple at home', 'senior couple conversation at home', 'older couple living room')
-    }
-    if (['家庭', '子女', '儿女', '代际'].some(token => source.includes(token))) {
-      queries.push('asian senior family at home', 'older parents and adult child at home', 'family conversation at home')
-    }
-    if (source.includes('婆媳')) queries.push('family women conversation at home', 'mother and adult daughter at home', 'senior family kitchen')
-    if (['手机', '电话', '诈骗', '反诈', '消息'].some(token => source.includes(token))) {
-      queries.push('senior using smartphone at home', 'older adult phone call at home', 'senior checking phone message')
-    }
-    if (['看病', '医保', '医院', '门诊', '医生'].some(token => source.includes(token))) {
-      queries.push('senior patient consultation', 'older adult medical paperwork', 'senior clinic waiting room')
-    }
-    if (['出门', '踏青', '外出', '旅行'].some(token => source.includes(token))) {
-      queries.push('senior getting ready to go out', 'older adult walking outdoors', 'senior travel preparation')
-    }
-    if (['睡眠', '失眠', '夜里', '总醒'].some(token => source.includes(token))) {
-      queries.push('senior resting at home', 'older adult sitting on bed', 'senior bedroom routine')
-    }
-    if (['退休', '花钱', '钱', '存款'].some(token => source.includes(token))) {
-      queries.push('retired couple home discussion', 'senior couple planning expenses', 'older adult home finances')
+    // 从图片 prompt 中提取视觉元素生成精准搜索词
+    const visualMap = {
+      '药片|药瓶|降压药|维生素|钙片': ['medicine bottle', 'pills on table'],
+      '手|老年斑|皱纹|指尖': ['elderly hands close up', 'aged hands detail'],
+      '厨房|灶台|煮|粥': ['senior in kitchen', 'elderly cooking at home'],
+      '窗户|擦窗|窗台|玻璃': ['elderly by window', 'senior cleaning window'],
+      '手机|微信|转账|消息': ['senior using smartphone', 'elderly checking phone'],
+      '医院|诊室|医生|护士': ['senior at doctor office', 'elderly medical consultation'],
+      '存折|钱|工资卡|退休金': ['elderly with paperwork', 'senior financial documents'],
+      '饭桌|吃饭|碗|筷子': ['senior family dinner', 'elderly eating at home'],
+      '沙发|客厅|藤椅|椅子': ['senior sitting at home', 'elderly in living room'],
+      '阳光|晨光|月光|路灯': ['warm natural light home', 'sunlight through window'],
+      '孩子|孙子|孙女|小孩': ['grandparent and child', 'senior with grandchild'],
+      '贴纸|画|蜡笔|手工': ['children drawing', 'kids artwork'],
+      '体检|血压|心电图': ['senior health check', 'blood pressure monitoring']
     }
 
-    if (slot === 'cover') queries.push('senior lifestyle home', 'older adult portrait home')
-    else if (slot === 'before_ending') queries.push('senior family warm moment', 'older couple walking together')
-    else queries.push('senior home conversation', 'older adult daily life home')
+    for (const [keywords, englishQueries] of Object.entries(visualMap)) {
+      if (keywords.split('|').some(k => source.includes(k))) {
+        queries.push(...englishQueries)
+      }
+    }
 
-    queries.push('asian senior lifestyle home', 'senior lifestyle photo')
+    // 兜底通用词
+    if (slot === 'cover') queries.push('asian senior lifestyle home', 'senior portrait at home')
+    else queries.push('asian senior daily life', 'senior home moment')
+
     return unique(queries)
   }
 
