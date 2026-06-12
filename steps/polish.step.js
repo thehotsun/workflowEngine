@@ -2,6 +2,7 @@
 
 const BaseStep = require('./base.step')
 const modelRouter = require('../models/router')
+const logger = require('../utils/logger')
 
 /**
  * polish step — 对已有文章进行润色优化
@@ -33,6 +34,8 @@ class PolishStep extends BaseStep {
     const article = context.get('article')
     if (!article) throw new Error('polish: no article in context')
 
+    logger.info({ wordCount: article.length }, '✨ polish: 开始润色')
+
     const config = context.get('_config') || {}
     const stepConfig = config[this._configKey] || {}
 
@@ -55,10 +58,29 @@ class PolishStep extends BaseStep {
     ].filter(Boolean).join('\n')
 
     const model = modelRouter.route(taskType)
-    const { content, usage } = await model.chat([
+    let { content, usage } = await model.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: article }
     ], { temperature, maxTokens })
+
+    // polish 后检查字数，如果缩水太多则补回细节
+    const chineseCount = (str) => (str.match(/[\u4e00-\u9fff]/g) || []).length
+    const polishedCount = chineseCount(content)
+    const originalCount = chineseCount(article)
+    if (polishedCount < originalCount * 0.8 && polishedCount < 1000) {
+      logger.info({ before: originalCount, after: polishedCount }, '⚠️ polish: 润色后字数缩水过多，尝试补回')
+      try {
+        const { content: expanded } = await model.chat([
+          { role: 'system', content: '以下文章被润色后字数缩水了，请补充 1-2 个场景细节或对话，使内容更丰满。保持原有风格，直接输出完整文章。' },
+          { role: 'user', content: content }
+        ], { temperature: 0.7, maxTokens: 4000 })
+        if (expanded && chineseCount(expanded) > polishedCount) {
+          content = expanded.replace(/^```\w*\s*/i, '').replace(/```\s*$/, '').trim()
+        }
+      } catch {}
+    }
+
+    logger.info({ wordCount: chineseCount(content) }, '✅ polish: 润色完成')
 
     return { ok: true, output: { article: content }, usage }
   }
