@@ -2,11 +2,13 @@
 
 const { enqueueDlq } = require('../persist/repos/dlq.repo')
 const logger = require('../utils/logger')
+const { createChildLogger } = require('../utils/child-logger')
 
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_BASE_DELAY_MS = 1000
 
 async function withRetry({ fn, stepName, runId, maxRetries = DEFAULT_MAX_RETRIES, baseDelay = DEFAULT_BASE_DELAY_MS }) {
+  const retryLog = createChildLogger({ runId, stepName })
   let attempt = 0
   let lastError
 
@@ -17,18 +19,18 @@ async function withRetry({ fn, stepName, runId, maxRetries = DEFAULT_MAX_RETRIES
       lastError = err
 
       if (err?.notRetryable || err?.isInputError) {
-        logger.warn({ runId, stepName, attempt, err: err.message }, 'Step failed with non-retryable error')
+        retryLog.warn({ attempt, err: err.message }, 'Step failed with non-retryable error')
         break
       }
 
       attempt++
       if (attempt > maxRetries) {
-        logger.error({ runId, stepName, attempt, maxRetries, err: err.message }, 'Step retries exhausted')
+        retryLog.error({ attempt, maxRetries, err: err.message }, 'Step retries exhausted')
         break
       }
 
       const delay = baseDelay * Math.pow(2, attempt - 1)
-      logger.warn({ runId, stepName, attempt, maxRetries, delayMs: delay, err: err.message }, 'Step failed, scheduling retry')
+      retryLog.warn({ attempt, maxRetries, delayMs: delay, err: err.message }, 'Step failed, scheduling retry')
       await sleep(delay)
     }
   }

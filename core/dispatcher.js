@@ -1,6 +1,7 @@
 'use strict'
 
 const logger = require('../utils/logger')
+const { createChildLogger } = require('../utils/child-logger')
 
 /**
  * 按顺序调度执行 workflow 的 steps。
@@ -11,6 +12,7 @@ const logger = require('../utils/logger')
  * - 'skip'：记录错误日志后继续执行下一步骤
  */
 async function dispatchSteps({ steps, engine, context, runId, conversation, workflow }) {
+  const dispatchLog = createChildLogger({ runId, workflowId: workflow?.id })
   for (let index = 0; index < steps.length; index++) {
     const stepDef = steps[index]
 
@@ -33,8 +35,8 @@ async function dispatchSteps({ steps, engine, context, runId, conversation, work
       const stepOnError = stepDef.onError || workflow?.onError || 'fail'
 
       if (stepOnError === 'skip') {
-        logger.warn(
-          { runId, stepName: err.stepName || stepDef.type, stepIndex: index, err: err.message },
+        dispatchLog.warn(
+          { stepName: err.stepName || stepDef.type, stepIndex: index, err: err.message },
           '⚠️ Step failed, skipping (onError=skip)'
         )
         continue

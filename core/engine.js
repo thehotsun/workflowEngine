@@ -12,6 +12,7 @@ const { enqueueMessage } = require('../persist/repos/outbox.repo')
 const { outboxEmitter } = require('../trigger/outbox-worker')
 const { buildStep } = require('../steps')
 const logger = require('../utils/logger')
+const { createChildLogger } = require('../utils/child-logger')
 
 // ==================== 拦截器 ====================
 // 白名单逻辑：复用已注册 workflow 的 trigger.match，
@@ -59,17 +60,18 @@ class WorkflowEngine {
   }
 
   async handleEvent({ event, conversation, inboxEventId }) {
+    const eventLog = createChildLogger({ eventId: inboxEventId, channelId: event.channelId })
     // 拦截器：复用 workflow trigger.match 做前置判断，不匹配任何流程则交还 openclaw
     const interceptResult = this.shouldProcessMessage(event)
     if (!interceptResult.allowed) {
-      logger.info({ inboxEventId, channelId: event.channelId, reason: interceptResult.reason }, '🚫 消息被拦截，跳过流程匹配')
+      eventLog.info({ reason: interceptResult.reason }, '🚫 消息被拦截，跳过流程匹配')
       if (inboxEventId) markDone(inboxEventId)
       return null
     }
 
     const workflow = this.matchWorkflow(event)
     if (!workflow) {
-      logger.info({ inboxEventId }, 'No workflow matched event')
+      eventLog.info('No workflow matched event')
       return null
     }
 
@@ -95,11 +97,14 @@ class WorkflowEngine {
     }
 
     markProcessing(effectiveEventId, runId)
+    const runLog = createChildLogger({ runId, eventId: effectiveEventId, workflowId: workflow.id })
+    runLog.info('🚀 Workflow run created')
     await this.runWorkflow({ workflow, runId, contextData: initialContext, conversation, eventId: effectiveEventId })
     return runId
   }
 
   async runWorkflow({ workflow, runId, contextData, conversation, eventId }) {
+    const runLog = createChildLogger({ runId, eventId, workflowId: workflow.id })
     const context = new WorkflowContext({ ...contextData, _runId: runId })
     const now = Date.now()
 
@@ -142,7 +147,7 @@ class WorkflowEngine {
           outboxEmitter.emit('new_message', { msgId: notifyMsgId, runId })
         }
       } catch (notifyErr) {
-        logger.warn({ runId, err: notifyErr.message }, '完成通知发送失败')
+        runLog.warn({ err: notifyErr.message }, '完成通知发送失败')
       }
 
       if (conversation?.id) {
@@ -157,7 +162,7 @@ class WorkflowEngine {
 
       if (eventId) markDone(eventId)
     } catch (err) {
-      logger.error({ runId, err: err.message }, 'Workflow step failed')
+      runLog.error({ err: err.message }, 'Workflow step failed')
 
       // 确定 onError 策略：step 级 > workflow 级 > 默认 'fail'
       const onError = err._stepOnError || workflow?.onError || 'fail'
@@ -178,7 +183,7 @@ class WorkflowEngine {
             _lastError: err.message
           }
         })
-        logger.info({ runId, stepIndex: pausedIndex, stepName: pausedStepName, err: err.message }, '⏸️ Workflow paused on error, waiting for operator')
+        runLog.info({ stepIndex: pausedIndex, stepName: pausedStepName, err: err.message }, '⏸️ Workflow paused on error, waiting for operator')
 
         // 发送暂停通知
         await this._notifyPause({ workflow, context, runId, err, stepName: pausedStepName })
@@ -212,6 +217,7 @@ class WorkflowEngine {
     context.set('_currentStepIndex', stepIndex)
     const step = buildStep(stepDef, { engine: this, workflow, conversation })
     const stepName = step.name || stepDef.type || `step_${stepIndex}`
+    const stepLog = createChildLogger({ runId, stepName, stepIndex, workflowId: workflow?.id })
 
     // 约束校验：step.requires + stepDef.requires/dependsOn
     const requiredKeys = collectRequiredKeys(step, stepDef)
@@ -251,7 +257,7 @@ class WorkflowEngine {
             _pauseReason: result.output?._pauseReason || null
           }
         })
-        logger.info({ runId, stepName, stepIndex, waitType: result._waitType || 'user_input' }, '⏸️ Workflow paused')
+        stepLog.info({ waitType: result._waitType || 'user_input' }, '⏸️ Workflow paused')
         return result
       }
 
@@ -351,7 +357,8 @@ class WorkflowEngine {
           context: context.toJSON()
         })
       } catch (err) {
-        logger.error({ runId: run.id, err: err.message }, 'Workflow recovery failed')
+        const recoverLog = createChildLogger({ runId: run.id, workflowId: run.workflow_id })
+        recoverLog.error({ err: err.message }, 'Workflow recovery failed')
 
         const onError = err._stepOnError || workflow?.onError || 'fail'
 
@@ -368,7 +375,8 @@ class WorkflowEngine {
               _lastError: err.message
             }
           })
-          logger.info({ runId: run.id, stepIndex: pausedIndex, err: err.message }, '⏸️ Recovery paused on error')
+          const recoverLog = createChildLogger({ runId: run.id })
+          recoverLog.info({ stepIndex: pausedIndex, err: err.message }, '⏸️ Recovery paused on error')
           await this._notifyPause({ workflow, context, runId: run.id, err, stepName: pausedStepName })
           continue
         }
@@ -454,7 +462,8 @@ class WorkflowEngine {
 
     const workflow = this.workflows.find(flow => flow.id === waitingRun.workflow_id)
     if (!workflow) {
-      logger.error({ runId: waitingRun.id, workflowId: waitingRun.workflow_id }, 'Cannot resume: workflow not found')
+      const resumeLog = createChildLogger({ runId: waitingRun.id, workflowId: waitingRun.workflow_id })
+      resumeLog.error('Cannot resume: workflow not found')
       updateRunStatus(waitingRun.id, 'failed', { error: 'Workflow not found for resume' })
       return null
     }
@@ -487,7 +496,8 @@ class WorkflowEngine {
     })
 
     const resumeLabel = waitType === 'error' ? 'error-resume' : 'user-resume'
-    logger.info({ runId: waitingRun.id, channelId, resumeIndex, waitType, userInput: String(userInput || '').slice(0, 50) }, `▶️ Resuming workflow (${resumeLabel})`)
+    const resumeLog = createChildLogger({ runId: waitingRun.id, channelId, workflowId: workflow.id })
+    resumeLog.info({ resumeIndex, waitType, userInput: String(userInput || '').slice(0, 50) }, `▶️ Resuming workflow (${resumeLabel})`)
 
     updateRunStatus(waitingRun.id, 'running', { context: context.toJSON() })
 
@@ -524,7 +534,7 @@ class WorkflowEngine {
             outboxEmitter.emit('new_message', { msgId: notifyMsgId, runId: waitingRun.id })
           }
         } catch (notifyErr) {
-          logger.warn({ runId: waitingRun.id, err: notifyErr.message }, '完成通知发送失败')
+          resumeLog.warn({ err: notifyErr.message }, '完成通知发送失败')
         }
       }
 
@@ -540,7 +550,7 @@ class WorkflowEngine {
 
       return waitingRun.id
     } catch (err) {
-      logger.error({ runId: waitingRun.id, err: err.message }, 'Workflow resume failed')
+      resumeLog.error({ err: err.message }, 'Workflow resume failed')
 
       // 恢复执行时如果又失败了，按 onError 策略处理
       const onError = err._stepOnError || workflow?.onError || 'fail'
@@ -559,7 +569,7 @@ class WorkflowEngine {
             _lastError: err.message
           }
         })
-        logger.info({ runId: waitingRun.id, stepIndex: pausedIndex, err: err.message }, '⏸️ Workflow re-paused after resume failure')
+        resumeLog.info({ stepIndex: pausedIndex, err: err.message }, '⏸️ Workflow re-paused after resume failure')
         await this._notifyPause({ workflow, context, runId: waitingRun.id, err, stepName: pausedStepName })
         return waitingRun.id
       }
