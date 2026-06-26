@@ -18,7 +18,9 @@ describe('RenderArticleStep', () => {
 
   describe('_escapeHtml', () => {
     it('should escape HTML special chars', () => {
-      expect(step._escapeHtml('<script>alert("xss")</script>')).toBe('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;')
+      expect(step._escapeHtml('<script>alert("xss")</script>')).toBe(
+        '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;',
+      )
     })
 
     it('should escape ampersand', () => {
@@ -62,8 +64,8 @@ describe('RenderArticleStep', () => {
           badge: '认证作者',
           subtitle: '测试副标题',
           highlights: ['亮点1'],
-          footer: '测试结尾'
-        }
+          footer: '测试结尾',
+        },
       }
       const html = step._buildAuthorCard(profile)
       expect(html).toContain('测试公众号')
@@ -75,7 +77,7 @@ describe('RenderArticleStep', () => {
 
     it('should use defaults for missing profile', () => {
       const html = step._buildAuthorCard({})
-      expect(html).toContain('心栖书香')
+      expect(html).toContain('温柔')
     })
   })
 
@@ -84,23 +86,36 @@ describe('RenderArticleStep', () => {
       const articleData = {
         title: '测试标题',
         lead: ['引言1', '引言2'],
-        sections: [{
-          heading: '小节1',
-          paragraphs: ['段落1'],
-          highlight: '重点句',
-          checklist: ['行动1']
-        }],
+        sections: [
+          {
+            heading: '小节1',
+            paragraphs: ['段落1'],
+            highlight: '重点句',
+            checklist: ['行动1'],
+          },
+        ],
         ending: ['结尾1'],
-        inline_images: [{
-          slot: 'after_lead',
-          prompt: '测试图片',
-          caption: '图片说明'
-        }]
+        inline_images: [
+          {
+            slot: 'after_lead',
+            prompt: '测试图片',
+            caption: '图片说明',
+          },
+        ],
       }
-      const enabledSlots = new Set(['after_lead', 'after_section_1', 'after_section_2', 'before_ending'])
+      const enabledSlots = new Set([
+        'after_lead',
+        'after_section_1',
+        'after_section_2',
+        'before_ending',
+      ])
       const profile = { accountName: '测试' }
 
-      const { finalHtml, finalMarkdown } = step._renderArticle(articleData, enabledSlots, profile)
+      const { finalHtml, finalMarkdown } = step._renderArticle(
+        articleData,
+        enabledSlots,
+        profile,
+      )
 
       expect(finalHtml).toContain('<h1')
       expect(finalHtml).toContain('测试标题')
@@ -119,10 +134,14 @@ describe('RenderArticleStep', () => {
         title: '标题',
         lead: [],
         sections: [],
-        ending: []
+        ending: [],
       }
       const enabledSlots = new Set()
-      const { finalHtml, finalMarkdown } = step._renderArticle(articleData, enabledSlots, null)
+      const { finalHtml, finalMarkdown } = step._renderArticle(
+        articleData,
+        enabledSlots,
+        null,
+      )
       expect(finalHtml).toContain('标题')
       expect(finalMarkdown).toContain('# 标题')
     })
@@ -134,8 +153,8 @@ describe('RenderArticleStep', () => {
         cover_prompt: '封面提示词',
         inline_images: [
           { slot: 'after_lead', prompt: '图片1', caption: '说明1' },
-          { slot: 'after_section_1', prompt: '图片2', caption: '说明2' }
-        ]
+          { slot: 'after_section_1', prompt: '图片2', caption: '说明2' },
+        ],
       }
       const enabledSlots = new Set(['after_lead', 'after_section_1'])
       const images = step._extractImages(articleData, enabledSlots)
@@ -150,8 +169,8 @@ describe('RenderArticleStep', () => {
         cover_prompt: '封面',
         inline_images: [
           { slot: 'after_lead', prompt: '图片1' },
-          { slot: 'disabled_slot', prompt: '图片2' }
-        ]
+          { slot: 'disabled_slot', prompt: '图片2' },
+        ],
       }
       const enabledSlots = new Set(['after_lead'])
       const images = step._extractImages(articleData, enabledSlots)
@@ -171,9 +190,9 @@ describe('RenderArticleStep', () => {
           title: '测试',
           lead: ['引言'],
           sections: [],
-          ending: ['结尾']
+          ending: ['结尾'],
         },
-        _config: createConfig()
+        _config: createConfig(),
       })
       const result = await step.execute(context)
       expect(result.ok).toBe(true)
