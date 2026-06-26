@@ -41,27 +41,24 @@ class RenderArticleStep extends BaseStep {
 
   _buildAuthorCard(profile) {
     const authorCard = profile.authorCard || {}
-    const accountName = profile.accountName || '温柔'
+    const accountName = profile.accountName || ''
     const badge = authorCard.badge || ''
-    const subtitle =
-      authorCard.subtitle || '陪你把家庭里的委屈、误会和边界，慢慢说清楚。'
+    const subtitle = authorCard.subtitle || ''
     const highlights = Array.isArray(authorCard.highlights)
       ? authorCard.highlights
-      : [
-          '专注家庭关系、夫妻相处与代际沟通',
-          '用温和、能共情的文字，写家里那些最难说出口的情绪',
-          '愿每一篇短文，都能帮家里少一点慌张，多一点从容',
-        ]
-    const footer =
-      authorCard.footer ||
-      '如果你觉得这篇文章像在说自己，也欢迎转给你关心的那个人。'
+      : []
+    const footer = authorCard.footer || ''
 
     let html = `<div style="margin-top: 48px; padding-top: 24px; border-top: 1px solid #eee;">`
     if (badge) {
       html += `<div style="font-size: 13px; color: #666; margin-bottom: 8px;">${this._escapeHtml(badge)}</div>`
     }
-    html += `<div style="font-weight: 600; color: #111; font-size: 16px; margin-bottom: 8px;">${this._escapeHtml(accountName)}</div>`
-    html += `<div style="font-size: 15px; color: #666; line-height: 1.8; margin-bottom: 16px;">${this._escapeHtml(subtitle)}</div>`
+    if (accountName) {
+      html += `<div style="font-weight: 600; color: #111; font-size: 16px; margin-bottom: 8px;">${this._escapeHtml(accountName)}</div>`
+    }
+    if (subtitle) {
+      html += `<div style="font-size: 15px; color: #666; line-height: 1.8; margin-bottom: 16px;">${this._escapeHtml(subtitle)}</div>`
+    }
     if (highlights.length > 0) {
       html += `<ul style="margin: 0; padding-left: 20px;">`
       for (const h of highlights) {
@@ -69,7 +66,9 @@ class RenderArticleStep extends BaseStep {
       }
       html += `</ul>`
     }
-    html += `<div style="font-size: 14px; color: #666; margin-top: 16px; line-height: 1.8;">${this._escapeHtml(footer)}</div>`
+    if (footer) {
+      html += `<div style="font-size: 14px; color: #666; margin-top: 16px; line-height: 1.8;">${this._escapeHtml(footer)}</div>`
+    }
     html += `</div>`
     return html
   }
@@ -99,14 +98,7 @@ class RenderArticleStep extends BaseStep {
     const inlineImages = (data.inline_images || []).filter((img) =>
       enabledSlots.has(img.slot),
     )
-    const authorCard = profile
-      ? this._buildAuthorCard(profile)
-      : `
-      <div style="margin-top: 48px; padding-top: 24px; border-top: 1px solid #eee; font-size: 15px; color: #666; line-height: 1.8;">
-        <p>这篇文章来自「温柔」，专为 50-75 岁读者及其家属服务，希望能帮你把生活过得更从容一点。</p>
-        <p style="margin-top: 12px;">如果觉得有用，欢迎转发给你关心的人。</p>
-      </div>
-    `.trim()
+    const authorCard = profile ? this._buildAuthorCard(profile) : ''
 
     const parts = []
     const partsMarkdown = []

@@ -75,9 +75,11 @@ describe('RenderArticleStep', () => {
       expect(html).toContain('测试结尾')
     })
 
-    it('should use defaults for missing profile', () => {
+    it('should render empty author card when profile has no values', () => {
       const html = step._buildAuthorCard({})
-      expect(html).toContain('温柔')
+      // 不应包含任何品牌相关的硬编码兜底值
+      expect(html).not.toContain('温柔')
+      expect(html).toContain('<div style="margin-top: 48px; padding-top: 24px; border-top: 1px solid #eee;">')
     })
   })
 

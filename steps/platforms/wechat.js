@@ -23,7 +23,7 @@ class WeChatPlatform {
   constructor(platformConfig = {}) {
     this.appId = String(platformConfig.appId || config.WECHAT_APP_ID || '').trim()
     this.appSecret = String(platformConfig.appSecret || config.WECHAT_APP_SECRET || '').trim()
-    this.author = String(platformConfig.author || config.WECHAT_AUTHOR || '公众号编辑部').trim()
+    this.author = String(platformConfig.author || config.WECHAT_AUTHOR || '').trim()
     this.showCoverPic = Number(platformConfig.showCoverPic != null ? platformConfig.showCoverPic : (config.WECHAT_SHOW_COVER_PIC || 0))
     this.needOpenComment = Number(platformConfig.needOpenComment != null ? platformConfig.needOpenComment : (config.WECHAT_NEED_OPEN_COMMENT != null ? config.WECHAT_NEED_OPEN_COMMENT : 1))
     this.onlyFansCanComment = Number(platformConfig.onlyFansCanComment != null ? platformConfig.onlyFansCanComment : (config.WECHAT_ONLY_FANS_CAN_COMMENT || 0))
@@ -64,6 +64,10 @@ class WeChatPlatform {
     const imagesConfig = workflowConfig.images || {}
     const enabledSlots = new Set(imagesConfig.enabledSlots || ['after_lead', 'after_section_1', 'after_section_2', 'before_ending'])
     const { finalHtml: uploadedHtml } = renderer._renderArticle(articleData, enabledSlots, accountProfile, uploadedInlineUrls)
+
+    if (!this.author) {
+      throw new Error('微信发布需要配置作者名称（author），请在 flow config 的 platformPublish 中设置 author，或在 .env 中设置 WECHAT_AUTHOR')
+    }
 
     const thumbMediaId = await this.uploadThumb(coverImagePath)
 

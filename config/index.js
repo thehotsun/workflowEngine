@@ -32,7 +32,7 @@ module.exports = {
 
   WECHAT_APP_ID: process.env.WECHAT_APP_ID || '',
   WECHAT_APP_SECRET: process.env.WECHAT_APP_SECRET || '',
-  WECHAT_AUTHOR: process.env.WECHAT_AUTHOR || '公众号编辑部',
+  WECHAT_AUTHOR: process.env.WECHAT_AUTHOR || '',
   WECHAT_SHOW_COVER_PIC: Number(process.env.WECHAT_SHOW_COVER_PIC || 0),
   WECHAT_NEED_OPEN_COMMENT: Number(process.env.WECHAT_NEED_OPEN_COMMENT || 1),
   WECHAT_ONLY_FANS_CAN_COMMENT: Number(process.env.WECHAT_ONLY_FANS_CAN_COMMENT || 0),
