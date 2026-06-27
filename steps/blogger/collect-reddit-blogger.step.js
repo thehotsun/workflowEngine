@@ -84,37 +84,66 @@ class CollectRedditBloggerStep extends BaseStep {
     }
   }
 
-  async _fetchPosts(username, limit) {
-    const url = `https://arctic-shift.photon-reddit.com/api/posts/search?author=${encodeURIComponent(username)}&limit=${limit}&sort=desc`
-    const res = await fetch(url, { signal: AbortSignal.timeout(20000) })
-    if (!res.ok) throw new Error(`帖子采集 HTTP ${res.status}`)
-    const data = await res.json()
-    return (data.data || [])
-      .filter(p => p.selftext && p.selftext !== '[removed]' && p.selftext !== '[deleted]')
-      .map(p => ({
-        title: p.title || '',
-        content: (p.selftext || '').slice(0, 3000),
-        score: p.score || 0,
-        url: `https://reddit.com${p.permalink || ''}`,
-        subreddit: p.subreddit || '',
-        createdAt: new Date((p.created_utc || 0) * 1000).toISOString(),
-      }))
+  async _fetchPosts(username, maxItems) {
+    return this._paginate('posts', username, maxItems, (p) =>
+      p.selftext && p.selftext !== '[removed]' && p.selftext !== '[deleted]'
+        ? {
+            title: p.title || '',
+            content: (p.selftext || '').slice(0, 3000),
+            score: p.score || 0,
+            url: `https://reddit.com${p.permalink || ''}`,
+            subreddit: p.subreddit || '',
+            createdAt: new Date((p.created_utc || 0) * 1000).toISOString(),
+          }
+        : null
+    )
   }
 
-  async _fetchComments(username, limit) {
-    const url = `https://arctic-shift.photon-reddit.com/api/comments/search?author=${encodeURIComponent(username)}&limit=${limit}&sort=desc`
-    const res = await fetch(url, { signal: AbortSignal.timeout(20000) })
-    if (!res.ok) throw new Error(`评论采集 HTTP ${res.status}`)
-    const data = await res.json()
-    return (data.data || [])
-      .filter(c => c.body && c.body !== '[removed]' && c.body !== '[deleted]')
-      .map(c => ({
-        content: (c.body || '').slice(0, 2000),
-        score: c.score || 0,
-        url: `https://reddit.com${c.permalink || ''}`,
-        subreddit: c.subreddit || '',
-        createdAt: new Date((c.created_utc || 0) * 1000).toISOString(),
-      }))
+  async _fetchComments(username, maxItems) {
+    return this._paginate('comments', username, maxItems, (c) =>
+      c.body && c.body !== '[removed]' && c.body !== '[deleted]'
+        ? {
+            content: (c.body || '').slice(0, 2000),
+            score: c.score || 0,
+            url: `https://reddit.com${c.permalink || ''}`,
+            subreddit: c.subreddit || '',
+            createdAt: new Date((c.created_utc || 0) * 1000).toISOString(),
+          }
+        : null
+    )
+  }
+
+  /**
+   * 分页采集，每批最多 100 条，自动翻页直到拿完或达到 maxItems
+   */
+  async _paginate(type, username, maxItems, mapper) {
+    const BASE = 'https://arctic-shift.photon-reddit.com/api'
+    const all = []
+    let before = undefined
+    const perPage = 100
+
+    while (all.length < maxItems) {
+      const limit = Math.min(perPage, maxItems - all.length)
+      let url = `${BASE}/${type}/search?author=${encodeURIComponent(username)}&limit=${limit}&sort=desc`
+      if (before) url += `&before=${before}`
+
+      const res = await fetch(url, { signal: AbortSignal.timeout(20000) })
+      if (!res.ok) throw new Error(`${type} 采集 HTTP ${res.status}`)
+      const data = await res.json()
+
+      const raw = data.data || []
+      if (raw.length === 0) break
+
+      const mapped = raw.map(mapper).filter(Boolean)
+      all.push(...mapped)
+
+      // 用本批最早的时间戳作为下一批的 before
+      const oldest = Math.min(...raw.map(item => item.created_utc || 0))
+      if (oldest <= 0 || raw.length < limit) break  // 没有更多数据了
+      before = oldest
+    }
+
+    return all.slice(0, maxItems)
   }
 }
 
