@@ -1,7 +1,7 @@
 'use strict'
 
 const { describe, it, expect } = require('@jest/globals')
-const WriteStep = require('../../steps/write.step')
+const WriteStep = require('../../steps/content/write.step')
 const { MockContext, createStepDef, createConfig } = require('../helpers')
 
 describe('WriteStep', () => {

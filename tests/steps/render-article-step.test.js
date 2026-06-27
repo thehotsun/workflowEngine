@@ -1,7 +1,7 @@
 'use strict'
 
 const { describe, it, expect } = require('@jest/globals')
-const RenderArticleStep = require('../../steps/render-article.step')
+const RenderArticleStep = require('../../steps/output/render-article.step')
 const { MockContext, createConfig } = require('../helpers')
 
 describe('RenderArticleStep', () => {

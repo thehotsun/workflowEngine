@@ -15,7 +15,7 @@
 const fs = require('fs')
 const path = require('path')
 const config = require('../../config')
-const RenderArticleStep = require('../render-article.step')
+const RenderArticleStep = require('../output/render-article.step')
 
 const API_BASE = 'https://api.weixin.qq.com'
 

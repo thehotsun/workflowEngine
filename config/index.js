@@ -28,6 +28,8 @@ module.exports = {
   OPENVERSE_ACCESS_TOKEN: process.env.OPENVERSE_ACCESS_TOKEN || '',
   OPENVERSE_TOKEN_CACHE_PATH: process.env.OPENVERSE_TOKEN_CACHE_PATH || path.join('data', 'openverse_token_cache.json'),
   FREE_PHOTO_TIMEOUT: Number(process.env.FREE_PHOTO_TIMEOUT || 60000),
+
+  PEXELS_API_KEY: process.env.PEXELS_API_KEY || '',
   IMAGE_ASSET_DIR: process.env.IMAGE_ASSET_DIR || path.join('data', 'article-assets'),
 
   WECHAT_APP_ID: process.env.WECHAT_APP_ID || '',

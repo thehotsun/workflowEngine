@@ -1,0 +1,157 @@
+'use strict'
+
+const BaseStep = require('../base.step')
+const openclawClient = require('../../openclaw/client')
+const logger = require('../../utils/logger')
+const { extractSearchResults } = require('../../utils/search-results')
+
+/**
+ * Reddit 采集 Step
+ * 通过 Tavily 搜索 + PullPush.io API 采集 Reddit 金融内容
+ * 
+ * 输出：帖子列表 [{title, author, score, num_comments, url, subreddit, selftext, created_utc, source}]
+ */
+class CollectRedditStep extends BaseStep {
+  get name() { return 'collect-reddit' }
+  get description() { return '从 Reddit 采集金融帖子（Tavily + PullPush.io 双通道）' }
+  get category() { return 'collection' }
+  get timeout() { return 90_000 }
+  get requires() { return [] }
+  get provides() { return [] }  // 输出由 parallel step 处理
+
+  async execute(context, stepDef) {
+    const flowConfig = context.get('_config') || {}
+    const stepConfig = { ...this._getDefaultConfig(), ...flowConfig.reddit }
+
+    logger.info({ subreddits: stepConfig.subreddits }, '📡 开始 Reddit 采集')
+
+    const allPosts = []
+
+    // 通道 1: Tavily 搜索
+    const tavilyPosts = await this._fetchViaTavily(stepConfig)
+    allPosts.push(...tavilyPosts)
+
+    // 通道 2: PullPush.io API
+    const pullpushPosts = await this._fetchViaPullPush(stepConfig)
+    allPosts.push(...pullpushPosts)
+
+    // 去重（按 URL）
+    const seen = new Set()
+    const unique = allPosts.filter(p => {
+      if (!p.url || seen.has(p.url)) return false
+      seen.add(p.url)
+      return true
+    })
+
+    logger.info({ tavily: tavilyPosts.length, pullpush: pullpushPosts.length, unique: unique.length }, '✅ Reddit 采集完成')
+    return { ok: true, output: unique }
+  }
+
+  async _fetchViaTavily(config) {
+    const posts = []
+    const queries = []
+
+    // 为每个 subreddit 生成搜索查询
+    for (const sub of config.subreddits) {
+      queries.push(`site:reddit.com/r/${sub} stock analysis`)
+      queries.push(`site:reddit.com/r/${sub} undervalued DD`)
+    }
+
+    for (const query of queries.slice(0, 6)) {
+      try {
+        const result = await openclawClient.invokeTool('web_search', {
+          query,
+          count: 5,
+        }, { timeoutMs: 15000 })
+
+        for (const item of extractSearchResults(result)) {
+          if (item.url && item.url.includes('reddit.com')) {
+            posts.push({
+              title: item.title || '',
+              url: item.url,
+              snippet: (item.snippet || '').slice(0, 500),
+              source: 'reddit',
+              subreddit: this._extractSubreddit(item.url),
+            })
+          }
+        }
+      } catch (err) {
+        logger.warn({ query: query.slice(0, 40), err: err.message }, '⚠️ Tavily Reddit 搜索失败')
+      }
+    }
+
+    return posts
+  }
+
+  async _fetchViaPullPush(config) {
+    const posts = []
+    const proxyUrl = config.proxy || 'http://127.0.0.1:7897'
+
+    for (const subreddit of config.subreddits.slice(0, 4)) {
+      const url = `https://api.pullpush.io/reddit/search/submission/?subreddit=${subreddit}&sort=new&size=${config.limitPerSub || 10}`
+      const startMs = Date.now()
+      try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 15000)
+
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: { 'User-Agent': 'WorkflowEngine/1.0' },
+        })
+        clearTimeout(timer)
+        const latencyMs = Date.now() - startMs
+
+        if (!res.ok) {
+          const body = await res.text().catch(() => '')
+          logger.warn({ subreddit, url, status: res.status, latencyMs, body: body.slice(0, 200) }, '❌ PullPush HTTP 错误')
+          continue
+        }
+
+        const data = await res.json()
+        const rawCount = (data.data || []).length
+        for (const item of (data.data || [])) {
+          const selftext = (item.selftext || '').slice(0, 500)
+          if (selftext === '[removed]' || selftext === '[deleted]') continue
+
+          posts.push({
+            title: item.title || '',
+            author: item.author || '',
+            score: item.score || 0,
+            num_comments: item.num_comments || 0,
+            url: `https://reddit.com${item.permalink || ''}`,
+            subreddit: item.subreddit || subreddit,
+            selftext,
+            created_utc: item.created_utc || 0,
+            source: 'reddit',
+          })
+        }
+        logger.info({ subreddit, url, status: res.status, latencyMs, rawCount, kept: posts.length }, '📊 PullPush 响应')
+      } catch (err) {
+        const latencyMs = Date.now() - startMs
+        if (err.name === 'AbortError') {
+          logger.warn({ subreddit, url, latencyMs }, '❌ PullPush 请求超时')
+        } else {
+          logger.warn({ subreddit, url, latencyMs, err: err.message }, '❌ PullPush 请求失败')
+        }
+      }
+    }
+
+    return posts
+  }
+
+  _extractSubreddit(url) {
+    const match = url.match(/reddit\.com\/r\/([^/]+)/)
+    return match ? match[1] : ''
+  }
+
+  _getDefaultConfig() {
+    return {
+      subreddits: ['ValueInvesting', 'investing', 'stocks', 'wallstreetbets'],
+      keywords: ['short squeeze', 'undervalued', 'DD', 'earnings'],
+      limitPerSub: 10,
+      proxy: 'http://127.0.0.1:7897',
+    }
+  }
+}
+
+module.exports = CollectRedditStep

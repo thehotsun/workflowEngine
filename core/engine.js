@@ -275,6 +275,24 @@ class WorkflowEngine {
         finishedAt: Date.now()
       })
 
+      // 集中记录每个 step 的输出摘要
+      const durationMs = Date.now() - started
+      const output = result?.output
+      let outputSummary
+      if (Array.isArray(output)) {
+        outputSummary = `array[${output.length}]`
+      } else if (output && typeof output === 'object') {
+        const keys = Object.keys(output)
+        const counts = {}
+        for (const k of keys) {
+          if (Array.isArray(output[k])) counts[k] = output[k].length
+        }
+        outputSummary = keys.length > 0 ? `{${keys.join(', ')}}` + (Object.keys(counts).length > 0 ? ` ${JSON.stringify(counts)}` : '') : '{}'
+      } else {
+        outputSummary = String(output ?? 'null')
+      }
+      stepLog.info({ durationMs, output: outputSummary }, `📤 ${stepName} 完成`)
+
       updateRunStatus(runId, 'running', { context: context.toJSON() })
       return result
     } catch (err) {
@@ -340,8 +358,15 @@ class WorkflowEngine {
 
       try {
         for (let i = nextIndex; i < workflow.steps.length; i++) {
+          const stepDef = workflow.steps[i]
+          // condition 支持：条件不满足时跳过该 step
+          if (stepDef.condition && !stepDef.condition(context)) {
+            const skippedName = stepDef.type || `step_${i}`
+            runLog.info({ stepIndex: i, step: skippedName }, `⏭️ ${skippedName} 条件不满足，跳过`)
+            continue
+          }
           await this.runStep({
-            stepDef: workflow.steps[i],
+            stepDef,
             stepIndex: i,
             context,
             runId: run.id,
@@ -503,8 +528,15 @@ class WorkflowEngine {
 
     try {
       for (let i = resumeIndex; i < workflow.steps.length; i++) {
+        const stepDef = workflow.steps[i]
+        // condition 支持：条件不满足时跳过该 step
+        if (stepDef.condition && !stepDef.condition(context)) {
+          const skippedName = stepDef.type || `step_${i}`
+          resumeLog.info({ stepIndex: i, step: skippedName }, `⏭️ ${skippedName} 条件不满足，跳过`)
+          continue
+        }
         const result = await this.runStep({
-          stepDef: workflow.steps[i],
+          stepDef,
           stepIndex: i,
           context,
           runId: waitingRun.id,

@@ -1,0 +1,27 @@
+'use strict'
+
+const BaseStep = require('../base.step')
+const logger = require('../../utils/logger')
+
+/**
+ * 占位 step，不做任何事
+ *
+ * @workflow-config
+ * - 无需配置
+ *
+ * @requires [] - 无依赖
+ * @provides [] - 无输出
+ */
+class NoopStep extends BaseStep {
+  get name() { return 'noop' }
+  get description() { return '空操作占位，直接返回，不修改 context；用于流程测试或临时跳过某步骤' }
+  get category() { return 'flow-control' }
+  get retryable() { return false }
+
+  async execute() {
+    logger.info('⏭️ noop: 空操作')
+    return { ok: true, output: { noop: true } }
+  }
+}
+
+module.exports = NoopStep
