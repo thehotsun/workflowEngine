@@ -28,7 +28,7 @@ class CollectRedditBloggerStep extends BaseStep {
 
     logger.info({ username }, '📡 开始采集 Reddit 博主数据')
 
-    const limits = stepDef.limits || { posts: 100, comments: 100 }
+    const limits = stepDef.limits || { posts: 10000, comments: 10000 }
 
     try {
       // 并行采集帖子和评论
