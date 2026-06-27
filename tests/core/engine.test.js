@@ -54,7 +54,7 @@ describe('WorkflowEngine', () => {
     it('should return allowed=true when message matches workflow trigger', () => {
       const workflows = [{
         id: 'test',
-        trigger: { type: 'message', match: /hello/ }
+        trigger: { type: 'message', match: (text) => text.includes('hello') }
       }]
       const interceptor = buildInterceptor(workflows)
       const result = interceptor({ text: 'hello world', triggerType: 'message' })
@@ -64,7 +64,7 @@ describe('WorkflowEngine', () => {
     it('should return allowed=false when message does not match', () => {
       const workflows = [{
         id: 'test',
-        trigger: { type: 'message', match: /^特定关键词/ }
+        trigger: { type: 'message', match: (text) => text.startsWith('特定关键词') }
       }]
       const interceptor = buildInterceptor(workflows)
       const result = interceptor({ text: '普通消息', triggerType: 'message' })
@@ -76,7 +76,7 @@ describe('WorkflowEngine', () => {
       const workflows = [{
         id: 'test',
         enabled: false,
-        trigger: { type: 'message', match: /.*/ }
+        trigger: { type: 'message', match: () => true }
       }]
       const interceptor = buildInterceptor(workflows)
       const result = interceptor({ text: 'anything', triggerType: 'message' })
@@ -85,8 +85,8 @@ describe('WorkflowEngine', () => {
 
     it('should match when at least one workflow matches', () => {
       const workflows = [
-        { id: 'a', trigger: { type: 'message', match: /nope/ } },
-        { id: 'b', trigger: { type: 'message', match: /yes/ } }
+        { id: 'a', trigger: { type: 'message', match: (text) => text.includes('nope') } },
+        { id: 'b', trigger: { type: 'message', match: (text) => text.includes('yes') } }
       ]
       const interceptor = buildInterceptor(workflows)
       const result = interceptor({ text: 'yes please', triggerType: 'message' })
@@ -97,8 +97,8 @@ describe('WorkflowEngine', () => {
   describe('matchWorkflow', () => {
     it('should return matching workflow', () => {
       const workflows = [
-        { id: 'a', trigger: { type: 'message', match: /alpha/ } },
-        { id: 'b', trigger: { type: 'message', match: /beta/ } }
+        { id: 'a', trigger: { type: 'message', match: (text) => text.includes('alpha') } },
+        { id: 'b', trigger: { type: 'message', match: (text) => text.includes('beta') } }
       ]
       engine = new WorkflowEngine({ workflows })
       const result = engine.matchWorkflow({ text: 'beta test', triggerType: 'message' })
@@ -107,7 +107,7 @@ describe('WorkflowEngine', () => {
 
     it('should return undefined when no match', () => {
       engine = new WorkflowEngine({
-        workflows: [{ id: 'a', trigger: { type: 'message', match: /^exact$/ } }]
+        workflows: [{ id: 'a', trigger: { type: 'message', match: (text) => text === 'exact' } }]
       })
       const result = engine.matchWorkflow({ text: 'no match', triggerType: 'message' })
       expect(result).toBeUndefined()
@@ -115,7 +115,7 @@ describe('WorkflowEngine', () => {
 
     it('should skip disabled workflows', () => {
       engine = new WorkflowEngine({
-        workflows: [{ id: 'a', enabled: false, trigger: { type: 'message', match: /.*/ } }]
+        workflows: [{ id: 'a', enabled: false, trigger: { type: 'message', match: () => true } }]
       })
       const result = engine.matchWorkflow({ text: 'anything', triggerType: 'message' })
       expect(result).toBeUndefined()
@@ -125,7 +125,7 @@ describe('WorkflowEngine', () => {
   describe('handleEvent', () => {
     it('should return null when interceptor blocks', async () => {
       engine = new WorkflowEngine({
-        workflows: [{ id: 'a', trigger: { type: 'message', match: /^specific$/ } }]
+        workflows: [{ id: 'a', trigger: { type: 'message', match: (text) => text === 'specific' } }]
       })
       const result = await engine.handleEvent({
         event: { text: 'not matching', channelId: 'ch1', triggerType: 'message' },
@@ -139,7 +139,7 @@ describe('WorkflowEngine', () => {
     it('should create run when workflow matches and has steps', async () => {
       const mockStep = { type: 'noop' }
       engine = new WorkflowEngine({
-        workflows: [{ id: 'a', trigger: { type: 'message', match: /aaa/ }, steps: [mockStep] }]
+        workflows: [{ id: 'a', trigger: { type: 'message', match: (text) => text.includes('aaa') }, steps: [mockStep] }]
       })
       // Mock runWorkflow to avoid executing real steps
       engine.runWorkflow = jest.fn()

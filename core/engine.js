@@ -26,7 +26,7 @@ function buildInterceptor(workflows) {
       if (!flow.trigger) return false
       if (flow.trigger.type && flow.trigger.type !== event.triggerType) return false
       if (flow.trigger.source && flow.trigger.source !== source) return false
-      if (flow.trigger.match instanceof RegExp) return flow.trigger.match.test(text || '')
+      if (typeof flow.trigger.match === 'function') return flow.trigger.match(text || '')
       // source 匹配但无 match 条件，视为匹配（手动触发场景）
       if (flow.trigger.source && flow.trigger.source === source) return true
       return false
@@ -53,7 +53,7 @@ class WorkflowEngine {
       if (!flow.trigger) return false
       if (flow.trigger.type && flow.trigger.type !== event.triggerType) return false
       if (flow.trigger.source && flow.trigger.source !== event.source) return false
-      if (flow.trigger.match instanceof RegExp) return flow.trigger.match.test(event.text || '')
+      if (typeof flow.trigger.match === 'function') return flow.trigger.match(event.text || '')
       if (flow.trigger.source && flow.trigger.source === event.source) return true
       return false
     })

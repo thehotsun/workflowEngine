@@ -561,9 +561,45 @@ module.exports = {
     }
     // 其他自定义配置...
   },
-  trigger: { ... },
+  trigger: {
+    match: (text) => text === '触发词',  // 必须是函数，精确匹配
+    source: 'manual',                     // 可选：限制事件来源
+  },
   steps: [ ... ]
 }
+```
+
+### Trigger 匹配规则（v2026-06-27+）
+
+`trigger.match` **必须是函数**，引擎不再支持正则。
+
+```js
+// ✅ 精确匹配
+trigger: {
+  match: (text) => ['写文章', '帮我写'].includes(text),
+}
+
+// ✅ 包含匹配
+trigger: {
+  match: (text) => text.includes('关键词'),
+}
+
+// ✅ 自定义逻辑
+trigger: {
+  match: (text) => text.startsWith('生成') && text.length < 20,
+}
+
+// ❌ 不再支持
+trigger: {
+  match: /正则/   // 2026-06-27 起废弃
+}
+```
+
+匹配流程：
+1. 引擎收到消息 → 遍历所有 workflow
+2. 对每个 workflow 调用 `trigger.match(text)`
+3. 返回 `true` → 触发该 workflow
+4. 无匹配 → 消息交还 OpenClaw 常规处理
 ```
 
 ```js
@@ -637,6 +673,30 @@ class WriteStep extends BaseStep { ... }
 - 确认 `provides` 包含该 key 的上游 step 在当前 step 之前
 - 确认上游 step 确实执行成功（查 step_runs 表）
 - 检查上游 step 返回的 output 字段名是否正确
+
+---
+
+### 16.3 Step 条件跳过（condition）
+
+每个 step 可配置 `condition` 函数，返回 `false` 时跳过该 step：
+
+```js
+steps: [
+  {
+    type: 'analyze-finance',
+    condition: (ctx) => ctx.get('highQualityItems')?.length > 0,
+  },
+  {
+    type: 'publish-intel',
+    condition: (ctx) => ctx.get('pushDecision')?.shouldPush !== false,
+  },
+]
+```
+
+- `condition` 接收 `context` 参数，返回布尔值
+- 返回 `false` → 跳过该 step，继续执行下一步（不报错）
+- 返回 `true` 或未配置 `condition` → 正常执行
+- 适用场景：可选步骤、数据驱动的分支逻辑、避免空数据调用 LLM
 
 ---
 
@@ -747,4 +807,4 @@ publish requires: [article, channelId, _runId]
 
 ---
 
-*文档最后更新：2026-05-09（commit 321d1f4 — feat: 流程失败后更改为wait状态）*
+*文档最后更新：2026-06-27（feat: trigger.match 改为函数 + step condition 支持）*

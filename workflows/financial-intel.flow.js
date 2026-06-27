@@ -98,7 +98,7 @@ module.exports = {
 
   trigger: {
     schedule: '0 9 * * *',
-    match: /金融采集|金融信息|采集分析/,
+    match: (text) => ['金融采集', '金融信息', '采集分析'].includes(text),
     // 支持手动触发
     source: 'manual',
     manual: true,

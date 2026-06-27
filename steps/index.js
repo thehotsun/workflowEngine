@@ -50,6 +50,7 @@ const ScoreTonghuashunStep = require('./analysis/score-tonghuashun.step')
 const ScoreSeekingAlphaStep = require('./analysis/score-seeking-alpha.step')
 const ScoreSubstackStep = require('./analysis/score-substack.step')
 const ScoreEastmoneyStep = require('./analysis/score-eastmoney.step')
+const CollectRedditBloggerStep = require('./blogger/collect-reddit-blogger.step')
 
 const STEP_REGISTRY = {
   'parallel':            (def, deps) => new ParallelStep({ steps: def.steps, ...deps }),
@@ -100,6 +101,9 @@ const STEP_REGISTRY = {
   'score-substack':         (def, deps) => new ScoreSubstackStep(),
   'score-eastmoney':        (def, deps) => new ScoreEastmoneyStep(),
   'publish-intel':        (def, deps) => new PublishIntelStep(),
+
+  // Blogger
+  'collect-reddit-blogger': (def, deps) => new CollectRedditBloggerStep(),
 }
 
 function buildStep(stepDef, deps = {}) {
