@@ -41,7 +41,7 @@ class CollectDiscordStep extends BaseStep {
             source: 'discord',
           })
         }
-        logger.info({ query: query.slice(0, 50), returned: results.length, latencyMs }, '📊 Discord 搜索结果')
+        logger.info({ query: query.slice(0, 50), returned: results.length, latencyMs, sample: results.slice(0, 3) }, '📝 Discord 搜索结果详情')
       } catch (err) {
         logger.warn({ query: query.slice(0, 50), err: err.message }, '❌ Discord 搜索失败')
       }

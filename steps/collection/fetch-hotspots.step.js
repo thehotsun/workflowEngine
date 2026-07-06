@@ -1,5 +1,6 @@
 'use strict'
 
+const http = require('http')
 const BaseStep = require('../base.step')
 const https = require('https')
 const logger = require('../../utils/logger')
@@ -71,9 +72,10 @@ class FetchHotspotsStep extends BaseStep {
   _requestJson(url) {
     return new Promise((resolve, reject) => {
       const parsedUrl = new URL(url)
+      const protocol = parsedUrl.protocol === 'http:' ? http : https
       const options = {
         hostname: parsedUrl.hostname,
-        port: parsedUrl.port || 443,
+        port: parsedUrl.port || (parsedUrl.protocol === 'http:' ? 80 : 443),
         path: parsedUrl.pathname + parsedUrl.search,
         method: 'GET',
         headers: {
@@ -81,12 +83,18 @@ class FetchHotspotsStep extends BaseStep {
         }
       }
 
-      const req = https.request(options, (res) => {
+      if (parsedUrl.hostname === 'weibo.com') {
+        options.headers['Referer'] = 'https://weibo.com/'
+        options.headers['Accept'] = 'application/json, text/plain, */*'
+      }
+
+      const req = protocol.request(options, (res) => {
         let data = ''
         res.on('data', (chunk) => {
           data += chunk
         })
         res.on('end', () => {
+          logger.info({ url, status: res.statusCode, headers: res.headers }, '🌐 HTTP 响应')
           try {
             resolve(JSON.parse(data))
           } catch (err) {
@@ -110,11 +118,15 @@ class FetchHotspotsStep extends BaseStep {
 
   async _fetchWithRetry(url, tries = 3) {
     const backoff = [1000, 2000, 4000]
+    const startMs = Date.now()
     let lastError = null
 
     for (let i = 0; i < tries; i++) {
       try {
-        return await this._requestJson(url)
+        const result = await this._requestJson(url)
+        const latencyMs = Date.now() - startMs
+        logger.info({ url, tries: i + 1, latencyMs }, '🔄 请求成功')
+        return result
       } catch (err) {
         lastError = err
         if (i < tries - 1) {
@@ -123,6 +135,8 @@ class FetchHotspotsStep extends BaseStep {
       }
     }
 
+    const latencyMs = Date.now() - startMs
+    logger.info({ url, tries, latencyMs }, '🔄 请求重试完成')
     throw new Error(`热点接口请求失败：${lastError}`)
   }
 
@@ -132,6 +146,7 @@ class FetchHotspotsStep extends BaseStep {
       const realtime = data?.data?.realtime || []
       if (!Array.isArray(realtime)) return []
 
+      logger.info({ rawCount: realtime.length }, '📥 微博原始数据')
       const items = []
       for (const item of realtime.slice(0, limit)) {
         const word = String(item.word || '').trim()
@@ -143,8 +158,10 @@ class FetchHotspotsStep extends BaseStep {
           url: `https://s.weibo.com/weibo?q=${encodeURIComponent(word)}`
         })
       }
+      logger.info({ source: 'weibo', kept: items.length, sample: items.slice(0, 3) }, '📝 微博热点样本')
       return items
-    } catch {
+    } catch (err) {
+      logger.warn({ source: 'weibo', err: err.message }, '❌ 微博抓取失败')
       return []
     }
   }
@@ -155,6 +172,7 @@ class FetchHotspotsStep extends BaseStep {
       const board = data?.data || []
       if (!Array.isArray(board)) return []
 
+      logger.info({ rawCount: board.length }, '📥 头条原始数据')
       const items = []
       for (const item of board.slice(0, limit)) {
         const title = String(item.Title || '').trim()
@@ -166,8 +184,10 @@ class FetchHotspotsStep extends BaseStep {
           url: String(item.Url || '').trim()
         })
       }
+      logger.info({ source: 'toutiao', kept: items.length, sample: items.slice(0, 3) }, '📝 头条热点样本')
       return items
-    } catch {
+    } catch (err) {
+      logger.warn({ source: 'toutiao', err: err.message }, '❌ 头条抓取失败')
       return []
     }
   }
@@ -178,6 +198,7 @@ class FetchHotspotsStep extends BaseStep {
       const cards = data?.data?.cards || []
       if (!Array.isArray(cards) || cards.length === 0) return []
 
+      logger.info({ rawCount: cards.length }, '📥 百度原始数据')
       const content = cards[0]?.content || []
       if (!Array.isArray(content)) return []
 
@@ -192,8 +213,10 @@ class FetchHotspotsStep extends BaseStep {
           url: String(item.url || '').trim()
         })
       }
+      logger.info({ source: 'baidu', kept: items.length, sample: items.slice(0, 3) }, '📝 百度热点样本')
       return items
-    } catch {
+    } catch (err) {
+      logger.warn({ source: 'baidu', err: err.message }, '❌ 百度抓取失败')
       return []
     }
   }
@@ -204,6 +227,7 @@ class FetchHotspotsStep extends BaseStep {
       const wordList = data?.word_list || []
       if (!Array.isArray(wordList)) return []
 
+      logger.info({ rawCount: wordList.length }, '📥 抖音原始数据')
       const items = []
       for (const item of wordList.slice(0, limit)) {
         const title = String(item.word || '').trim()
@@ -215,8 +239,10 @@ class FetchHotspotsStep extends BaseStep {
           url: ''
         })
       }
+      logger.info({ source: 'douyin', kept: items.length, sample: items.slice(0, 3) }, '📝 抖音热点样本')
       return items
-    } catch {
+    } catch (err) {
+      logger.warn({ source: 'douyin', err: err.message }, '❌ 抖音抓取失败')
       return []
     }
   }
@@ -227,6 +253,7 @@ class FetchHotspotsStep extends BaseStep {
       const trending = data?.data?.trending?.list || []
       if (!Array.isArray(trending)) return []
 
+      logger.info({ rawCount: trending.length }, '📥 B 站原始数据')
       const items = []
       for (const item of trending.slice(0, limit)) {
         const title = String(item.keyword || '').trim()
@@ -238,8 +265,10 @@ class FetchHotspotsStep extends BaseStep {
           url: ''
         })
       }
+      logger.info({ source: 'bilibili', kept: items.length, sample: items.slice(0, 3) }, '📝 B 站热点样本')
       return items
-    } catch {
+    } catch (err) {
+      logger.warn({ source: 'bilibili', err: err.message }, '❌ B 站抓取失败')
       return []
     }
   }

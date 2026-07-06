@@ -47,7 +47,7 @@ class CollectSeekingAlphaStep extends BaseStep {
             })
           }
         }
-        logger.info({ query: query.slice(0, 50), returned: results.length, matched, latencyMs }, '📊 Seeking Alpha 搜索结果')
+        logger.info({ query: query.slice(0, 50), returned: results.length, matched, latencyMs, sample: allArticles.slice(0, 3) }, '📝 Seeking Alpha 搜索结果详情')
       } catch (err) {
         logger.warn({ query: query.slice(0, 50), err: err.message }, '❌ Seeking Alpha 搜索失败')
       }

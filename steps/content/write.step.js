@@ -39,6 +39,7 @@ class WriteStep extends BaseStep {
 
     const modelConfig = stepConfig.model || {}
     const taskType = modelConfig.taskType || 'writing'
+    const modelOverride = modelConfig.model || null
     const temperature = stepConfig.temperature ?? 0.7
     const maxTokens = stepConfig.maxTokens ?? 4000
 
@@ -114,7 +115,7 @@ class WriteStep extends BaseStep {
       `\n请根据以上信息，按照要求的 JSON 格式输出文章。`
     ].filter(Boolean).join('\n')
 
-    const model = modelRouter.route(taskType)
+    const model = modelRouter.route(taskType, { model: modelOverride })
     const { content, usage } = await model.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }

@@ -41,7 +41,7 @@ class Semaphore {
 }
 
 const LLM_SLOW_THRESHOLD_MS = 10_000
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 180_000
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 300_000  // 5 分钟
 const EMBED_SLOW_THRESHOLD_MS = 5_000
 const embedSemaphore = new Semaphore(MAX_CONCURRENT_EMBED_CALLS || 5)
 const chatSemaphore = new Semaphore(MAX_CONCURRENT_LLM_CALLS || 3)

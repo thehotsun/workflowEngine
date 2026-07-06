@@ -22,7 +22,7 @@ class BaseStep {
 
   // 默认超时 ms
   get timeout() {
-    return 30_000
+    return 100_000  // 100 秒
   }
 
   /**

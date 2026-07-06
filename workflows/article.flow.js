@@ -146,10 +146,10 @@ module.exports = {
      * 消费方：steps/write.step.js
      */
     write: {
-      model: { taskType: 'writing' },
+      model: { taskType: 'writing', model: 'qwen3.7max' },
       temperature: 0.8,
       maxTokens: 4000,
-      targetWordCount: { min: 900, max: 1400 },
+      targetWordCount: { min: 1200, max: 1500 },
       digestLength: 54,
       persona:
         '你是中老年公众号的情感主笔。你擅长用真实、克制的笔触写家庭里那些"说不出口"的情绪，让读者觉得"这写的就是我家"。',
@@ -171,7 +171,7 @@ module.exports = {
      * 消费方：steps/polish.step.js
      */
     polish: {
-      model: { taskType: 'writing' },
+      model: { taskType: 'writing', model: 'glm5.1' },
       temperature: 0.5,
       maxTokens: 4000,
       persona:
@@ -224,7 +224,10 @@ module.exports = {
   trigger: {
     type: 'message',
     // 当用户说这些话时，就会自动触发这个流程
-    match: (text) => ['写文章', '写公众号', '帮我写', '生成文章'].includes(text),
+    match: (text) => {
+      const triggers = ['写文章', '写公众号', '帮我写', '生成文章']
+      return triggers.some(t => text.includes(t))
+    },
   },
 
   // ==========================================

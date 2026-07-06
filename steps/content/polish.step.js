@@ -26,7 +26,7 @@ class PolishStep extends BaseStep {
   get name() { return 'polish' }
   get description() { return '对已有文章进行润色：保持原意，提升可读性与段落结构（LLM）' }
   get category() { return 'content-creation' }
-  get timeout() { return 60_000 }
+  get timeout() { return 300_000 }  // 5 分钟
   get requires() { return ['article'] }
   get provides() { return ['article'] }
 
@@ -41,6 +41,7 @@ class PolishStep extends BaseStep {
 
     const modelConfig = stepConfig.model || {}
     const taskType = modelConfig.taskType || 'writing'
+    const modelOverride = modelConfig.model || null
     const temperature = stepConfig.temperature ?? 0.5
     const maxTokens = stepConfig.maxTokens ?? 4000
 
@@ -57,36 +58,21 @@ class PolishStep extends BaseStep {
       '3. 结尾不要用金句式收尾（如"原来最深的爱…"），用场景自然收尾或留白。',
       '4. 人物名字、时间线、细节前后必须一致，不要产生矛盾。',
       '5. 不要出现"这篇文字本身已极富质感""像一盏温着的老茶"等编辑自我介绍式的内容。',
-      styleGuide.focus ? `6. ${styleGuide.focus}` : '',
-      styleGuide.concrete ? `7. ${styleGuide.concrete}` : '',
-      styleGuide.antiAI ? `8. ${styleGuide.antiAI}` : '',
-      styleGuide.rhythm ? `9. ${styleGuide.rhythm}` : '',
-      styleGuide.ending ? `10. ${styleGuide.ending}` : ''
+      '6. 润色后字数保持在 1200-1500 字之间，不要大幅删减原文的场景细节和对话。',
+      styleGuide.focus ? `7. ${styleGuide.focus}` : '',
+      styleGuide.concrete ? `8. ${styleGuide.concrete}` : '',
+      styleGuide.antiAI ? `9. ${styleGuide.antiAI}` : '',
+      styleGuide.rhythm ? `10. ${styleGuide.rhythm}` : '',
+      styleGuide.ending ? `11. ${styleGuide.ending}` : ''
     ].filter(Boolean).join('\n')
 
-    const model = modelRouter.route(taskType)
-    let { content, usage } = await model.chat([
+    const model = modelRouter.route(taskType, { model: modelOverride })
+    const { content, usage } = await model.chat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: article }
     ], { temperature, maxTokens })
 
-    // polish 后检查字数，如果缩水太多则补回细节
     const chineseCount = (str) => (str.match(/[\u4e00-\u9fff]/g) || []).length
-    const polishedCount = chineseCount(content)
-    const originalCount = chineseCount(article)
-    if (polishedCount < originalCount * 0.8 && polishedCount < 1000) {
-      logger.info({ before: originalCount, after: polishedCount }, '⚠️ polish: 润色后字数缩水过多，尝试补回')
-      try {
-        const { content: expanded } = await model.chat([
-          { role: 'system', content: '以下文章被润色后字数缩水了，请补充 1-2 个场景细节或对话，使内容更丰满。保持原有风格，直接输出完整文章。' },
-          { role: 'user', content: content }
-        ], { temperature: 0.7, maxTokens: 4000 })
-        if (expanded && chineseCount(expanded) > polishedCount) {
-          content = expanded.replace(/^```\w*\s*/i, '').replace(/```\s*$/, '').trim()
-        }
-      } catch {}
-    }
-
     logger.info({ wordCount: chineseCount(content) }, '✅ polish: 润色完成')
 
     return { ok: true, output: { article: content }, usage }

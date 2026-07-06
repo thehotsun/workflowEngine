@@ -41,7 +41,7 @@ class CollectTwitterStep extends BaseStep {
             source: 'twitter',
           })
         }
-        logger.info({ query: query.slice(0, 50), returned: results.length, latencyMs }, '📊 X/Twitter 搜索结果')
+        logger.info({ query: query.slice(0, 50), returned: results.length, latencyMs, sample: results.slice(0, 3) }, '📝 X/Twitter 搜索结果详情')
       } catch (err) {
         logger.warn({ query: query.slice(0, 50), err: err.message }, '❌ X/Twitter 搜索失败')
       }

@@ -26,6 +26,7 @@ class CollectRedditArcticStep extends BaseStep {
       try {
         const posts = await this._fetchSubreddit(subreddit, config)
         allPosts.push(...posts)
+        logger.info({ subreddit, sample: posts.slice(0, 3) }, `📝 r/${subreddit} 数据样本`)
         logger.info({ subreddit, count: posts.length }, `✅ r/${subreddit} 采集完成`)
       } catch (err) {
         logger.warn({ subreddit, err: err.message }, `⚠️ r/${subreddit} 采集失败`)
