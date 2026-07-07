@@ -92,8 +92,8 @@ module.exports = {
      * 消费方：steps/fetch-hotspots.step.js
      */
     fetchHotspots: {
-      limitPerSource: 10,
-      enabledSources: ['weibo', 'toutiao', 'baidu'],
+      limitPerSource: 100,
+      enabledSources: ['toutiao', 'baidu', 'douyin'],
     },
 
     /**

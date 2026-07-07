@@ -35,23 +35,13 @@ class GenerateTopicsStep extends BaseStep {
     return history.some(h => this._topicKey(h.title || '') === key)
   }
 
-  _utf8Truncate(str, maxBytes) {
-    const encoder = new TextEncoder()
-    const bytes = encoder.encode(str)
-    if (bytes.length <= maxBytes) return str
-    let pos = maxBytes
-    while (pos > 0 && (bytes[pos] & 0xc0) === 0x80) pos--
-    return new TextDecoder('utf-8').decode(bytes.subarray(0, pos))
-  }
-
   async execute(context, stepDef) {
+  try {
     logger.info('📝 generate-topics: 开始生成候选话题')
 
     const input = context.get('input')
     const hotspots = context.get('hotspots')
     const conversationHistory = context.get('conversationHistory', [])
-    const ragResults = context.get('ragResults', [])
-    const searchResults = context.get('searchResults', [])
     const selectedTopicsHistory = context.get('selectedTopicsHistory', [])
     const config = context.get('_config') || {}
     const stepConfig = config[this._configKey] || {}
@@ -65,12 +55,6 @@ class GenerateTopicsStep extends BaseStep {
     const temperature = stepConfig.temperature ?? 0.8
     const maxTokens = stepConfig.maxTokens ?? 2000
 
-    const ragContext = ragResults
-      .map(c => `${c.heading ? `[${c.heading}] ` : ''}${c.content}`)
-      .join('\n\n')
-    const searchContext = Array.isArray(searchResults)
-      ? searchResults.slice(0, 3).map(r => r.content || r.snippet || '').join('\n\n')
-      : ''
     const hotspotsText = hotspots?.items
       ? hotspots.items.map(i => `- ${i.title}${i.hotness ? ` (热度：${i.hotness})` : ''}`).join('\n')
       : ''
@@ -115,8 +99,6 @@ class GenerateTopicsStep extends BaseStep {
 
     const userPromptParts = [`用户需求：${input}`]
     if (hotspotsText) userPromptParts.push(`\n今日热点：\n${hotspotsText}`)
-    if (ragContext) userPromptParts.push(`\n知识库参考：\n${ragContext}`)
-    if (searchContext) userPromptParts.push(`\n最新资讯参考：\n${searchContext}`)
     if (preferredTopics.length > 0) {
       userPromptParts.push(`\n账号偏好主题：${preferredTopics.join('、')}`)
     }
@@ -134,98 +116,86 @@ class GenerateTopicsStep extends BaseStep {
       if (h.topic) messages.splice(2, 0, { role: 'assistant', content: `上次主题：${h.topic}` })
     }
 
-    try {
-      const { content: modelContent, usage } = await model.chat(messages, { temperature, maxTokens })
-      content = modelContent
+    const { content: modelContent, usage } = await model.chat(messages, { temperature, maxTokens })
+    content = modelContent
 
-      try {
-        const jsonStr = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
-        const parsed = JSON.parse(jsonStr)
-        styleBrief = Array.isArray(parsed.styleBrief) ? parsed.styleBrief : []
-        topics = Array.isArray(parsed.topics) ? parsed.topics : []
-      } catch {
-        ;({ topics, styleBrief } = this._fallback(
-          input,
-          hotspots?.items || [],
-          preferredTopics,
-          selectedTopicsHistory,
-          topicCount,
-          avoidDuplicates
-        ))
-      }
+    const jsonStr = content.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
+    const parsed = JSON.parse(jsonStr)
+    styleBrief = Array.isArray(parsed.styleBrief) ? parsed.styleBrief : []
+    topics = Array.isArray(parsed.topics) ? parsed.topics : []
 
-      // 去重历史话题
-      if (avoidDuplicates && Array.isArray(selectedTopicsHistory)) {
-        topics = topics.filter(t => !this._isTopicSelected(selectedTopicsHistory, t.title))
-      }
-
-      // 确保 topics 有 id，并且数量符合要求
-      topics = topics.slice(0, topicCount)
-      topics = topics.map((t, idx) => ({
-        id: t.id || `T${String(idx + 1).padStart(2, '0')}`,
-        ...t,
-      }))
-
-      // 根据账号偏好调整分数
-      if (preferredTopics.length > 0) {
-        topics = topics.map(t => {
-          const haystack = `${t.title} ${t.intro} ${t.angle} ${(t.tags || []).join(' ')}`
-          let bonus = 0
-          for (const keyword of preferredTopics) {
-            if (haystack.includes(keyword)) {
-              bonus += 0.35
-            }
-          }
-          return {
-            ...t,
-            score: Math.min(10, Math.max(0, (t.score || 8) + bonus)),
-          }
-        })
-        topics.sort((a, b) => (b.score || 0) - (a.score || 0))
-      }
-
-      // 再次设置正确的 id（可能顺序变了）
-      topics = topics.map((t, idx) => ({
-        ...t,
-        id: `T${String(idx + 1).padStart(2, '0')}`,
-      }))
-
-      return {
-        ok: true,
-        output: {
-          topics,
-          styleBrief,
-          topicCandidates: {
-            generatedAt: new Date().toISOString(),
-            styleBrief,
-            topics,
-          },
-        },
-        usage,
-      }
-    } catch {
-      ;({ topics, styleBrief } = this._fallback(
-        input,
-        hotspots?.items || [],
-        preferredTopics,
-        selectedTopicsHistory,
-        topicCount,
-        avoidDuplicates
-      ))
-
-      return {
-        ok: true,
-        output: {
-          topics,
-          styleBrief,
-          topicCandidates: {
-            generatedAt: new Date().toISOString(),
-            styleBrief,
-            topics,
-          },
-        },
-      }
+    // 去重历史话题
+    if (avoidDuplicates && Array.isArray(selectedTopicsHistory)) {
+      topics = topics.filter(t => !this._isTopicSelected(selectedTopicsHistory, t.title))
     }
+
+    // 确保 topics 有 id，并且数量符合要求
+    topics = topics.slice(0, topicCount)
+    topics = topics.map((t, idx) => ({
+      id: t.id || `T${String(idx + 1).padStart(2, '0')}`,
+      ...t,
+    }))
+
+    // 根据账号偏好调整分数
+    if (preferredTopics.length > 0) {
+      topics = topics.map(t => {
+        const haystack = `${t.title} ${t.intro} ${t.angle} ${(t.tags || []).join(' ')}`
+        let bonus = 0
+        for (const keyword of preferredTopics) {
+          if (haystack.includes(keyword)) {
+            bonus += 0.35
+          }
+        }
+        return {
+          ...t,
+          score: Math.min(10, Math.max(0, (t.score || 8) + bonus)),
+        }
+      })
+      topics.sort((a, b) => (b.score || 0) - (a.score || 0))
+    }
+
+    // 再次设置正确的 id（可能顺序变了）
+    topics = topics.map((t, idx) => ({
+      ...t,
+      id: `T${String(idx + 1).padStart(2, '0')}`,
+    }))
+
+    return {
+      ok: true,
+      output: {
+        topics,
+        styleBrief,
+        topicCandidates: {
+          generatedAt: new Date().toISOString(),
+          styleBrief,
+          topics,
+        },
+      },
+      usage,
+    }
+  } catch {
+    const { topics, styleBrief } = this._fallback(
+      input,
+      hotspots?.items || [],
+      preferredTopics,
+      selectedTopicsHistory,
+      topicCount,
+      avoidDuplicates
+    )
+
+    return {
+      ok: true,
+      output: {
+        topics,
+        styleBrief,
+        topicCandidates: {
+          generatedAt: new Date().toISOString(),
+          styleBrief,
+          topics,
+        },
+      },
+    }
+  }
   }
 
   _fallback(input, hotspots, preferredTopics, selectedTopicsHistory, topicCount, avoidDuplicates) {

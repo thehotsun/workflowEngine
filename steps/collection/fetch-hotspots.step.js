@@ -9,8 +9,8 @@ const logger = require('../../utils/logger')
  * fetch-hotspots step - 抓取热点（微博、头条、百度、抖音、B站）
  *
  * @workflow-config
- * - _config.fetchHotspots.limitPerSource: 每个来源抓取数量（默认 10）
- * - _config.fetchHotspots.enabledSources: 启用的来源（默认 ['weibo', 'toutiao', 'baidu', 'douyin', 'bilibili']）
+ * - _config.fetchHotspots.limitPerSource: 每个来源抓取数量（默认 100）
+ * - _config.fetchHotspots.enabledSources: 启用的来源（默认 ['toutiao', 'baidu', 'douyin']）
  *
  * @requires [] - 无依赖
  * @provides ['hotspots'] - 热点列表
@@ -275,8 +275,8 @@ class FetchHotspotsStep extends BaseStep {
 
   async execute(context, stepDef) {
     const config = context.get('_config')?.fetchHotspots || {}
-    const limit = config.limitPerSource || 10
-    const enabledSources = config.enabledSources || ['weibo', 'toutiao', 'baidu', 'douyin', 'bilibili']
+    const limit = config.limitPerSource || 100
+    const enabledSources = config.enabledSources || ['toutiao', 'baidu', 'douyin']
     const demo = config.demo || false
 
     logger.info({ sources: enabledSources, limit, demo }, '📰 fetch-hotspots: 开始抓取热点')
@@ -299,11 +299,9 @@ class FetchHotspotsStep extends BaseStep {
 
     // 并行抓取所有来源，单个失败不影响其他
     const fetchMap = {
-      weibo: this._fetchWeibo,
       toutiao: this._fetchToutiao,
       baidu: this._fetchBaidu,
       douyin: this._fetchDouyin,
-      bilibili: this._fetchBilibili,
     }
 
     const results = await Promise.allSettled(
