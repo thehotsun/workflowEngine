@@ -93,7 +93,7 @@ module.exports = {
      */
     fetchHotspots: {
       limitPerSource: 100,
-      enabledSources: ['toutiao', 'baidu', 'douyin'],
+      enabledSources: ['weibo', 'toutiao', 'baidu', 'douyin'],
     },
 
     /**
