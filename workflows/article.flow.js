@@ -225,8 +225,8 @@ module.exports = {
     type: 'message',
     // 当用户说这些话时，就会自动触发这个流程
     match: (text) => {
-      const triggers = ['写文章', '写公众号', '帮我写', '生成文章']
-      return triggers.some(t => text.includes(t))
+      const triggers = ['写文章']
+      return triggers.some(t => text === t)
     },
   },
 
